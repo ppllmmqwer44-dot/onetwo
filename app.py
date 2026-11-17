@@ -193,15 +193,30 @@ def weekly_meals(d):
 
 def chart(frame, x, y, title, line=False):
     if frame.empty:
-        st.write('표시할 기록이 없습니다.')
+        st.write('아직 기록이 없어요.')
         return
+    frame = frame.copy()
+    if x == '날짜':
+        dates = pd.to_datetime(frame[x])
+        frame[x] = dates.dt.month.astype(str) + '월 ' + dates.dt.day.astype(str) + '일'
     maker = px.line if line else px.bar
-    fig = maker(frame, x=x, y=y, title=title, color_discrete_sequence=COLORS)
-    fig.update_layout(paper_bgcolor='#FDFDFF', plot_bgcolor='#FDFDFF',
-                      font_color='#1E2433', margin=dict(l=10, r=10, t=55, b=10),
-                      legend_title_text='항목', hovermode='x unified')
-    fig.update_yaxes(gridcolor='#E2E6F0', rangemode='tozero')
-    st.plotly_chart(fig, use_container_width=True)
+    fig = maker(frame, x=x, y=y, color_discrete_sequence=['#21854B','#7C8880'])
+    st.subheader(title)
+    if line:
+        fig.update_traces(mode='lines+markers', marker_size=8, connectgaps=False)
+        for trace in fig.data:
+            if '목표' in trace.name:
+                trace.update(line=dict(dash='dash',width=2), marker_size=0)
+    unit = '시간' if '시간' in title else ('보' if '걸음' in title else '회')
+    fig.update_traces(hovertemplate='%{x} · %{y}'+unit+'<extra>%{fullData.name}</extra>')
+    fig.update_layout(height=290, paper_bgcolor='#FFFFFF', plot_bgcolor='#FFFFFF',
+                      font=dict(size=17,color='#24382B'), margin=dict(l=8,r=8,t=10,b=10),
+                      legend=dict(title_text='',orientation='h',y=1.15,x=0),
+                      hovermode='x unified')
+    fig.update_xaxes(type='category',title_text='',fixedrange=True,
+                     tickmode='array',tickvals=frame[x].tolist(),ticktext=frame[x].tolist())
+    fig.update_yaxes(title_text=unit,gridcolor='#E8EEE9',rangemode='tozero',fixedrange=True)
+    st.plotly_chart(fig,use_container_width=True,config={'displayModeBar':False,'locale':'ko'})
 
 
 def names(d):
