@@ -360,7 +360,7 @@ def quests(d):
         st.write('현재 선택한 가족 이름으로 등록됩니다. 여러 담당자를 골라도 미션 카드는 하나로 보여요. 사진 제출과 미션금은 각자 따로 기록해요.')
         with st.form('new_quest', clear_on_submit=True):
             title = st.text_input('어떤 집안일인가요?', max_chars=60, placeholder='예: 설거지하기')
-            detail = st.text_area('완료 기준', max_chars=500, placeholder='예: 그릇을 씻고 싱크대까지 정리하기')
+            detail = st.text_input('완료 기준 (선택)', max_chars=500, placeholder='예: 싱크대 정리까지')
             people = visible_checks('누가 할까요?', list(n), format_func=n.get)
             reward = st.number_input('한 사람에게 줄 미션금(원)', 0, 1000000, 2000, 100)
             consent = st.checkbox('안전과 미션금을 가족과 합의했습니다.')
@@ -387,38 +387,42 @@ def quests(d):
                 st.divider()
                 st.write('**함께할 가족**')
                 st.write(' · '.join(n[q['담당']] for q in group))
-                st.write('미션금: '+ ' / '.join(n[q['담당']]+f" {q['용돈']:,}원" for q in group))
+                if len({q['용돈'] for q in group}) == 1:
+                    st.write(f"💰 1인당 미션금 {first['용돈']:,}원")
+                else:
+                    st.write('미션금: '+ ' / '.join(n[q['담당']]+f" {q['용돈']:,}원" for q in group))
                 st.divider()
                 st.write('**완료 기준**')
                 st.write(first['설명'] or '등록한 가족과 완료 기준을 이야기해 주세요.')
                 st.divider()
-                st.write('**가족별 진행 상황**')
-                rows = [{'가족': n[q['담당']], '상태': {'진행 중':'진행 중', '지급 대기':'완료 · 미션금 받을 예정', '지급 완료':'완료 · 미션금 받음'}.get(q['상태'], q['상태']), '미션금(원)': q['용돈']} for q in group]
-                st.table(pd.DataFrame(rows))
-                for q in group:
-                    st.divider()
-                    st.write('**👤 '+n[q['담당']]+' · 사진과 미션금**')
-                    if q.get('사진'):
-                        st.image(base64.b64decode(q['사진']), caption='제출한 완료 사진', use_container_width=True)
-                    if q['상태']=='진행 중' and actor==q['담당']:
-                        photo = st.file_uploader('완료 사진 올리기', type=['jpg','jpeg','png','webp'], key='photo_'+q['id'])
-                        st.caption('휴대폰의 카메라 또는 사진 보관함에서 선택하세요. 사진에는 얼굴·주소 등 개인정보를 담지 마세요. 원본 최대 10MB이며 저장 시 축소됩니다.')
-                        if st.button('📷 사진 제출하고 미션 완료!', key='finish_'+q['id'], disabled=photo is None, use_container_width=True):
-                            try:
-                                encoded = prepare_photo(photo.getvalue())
-                                used = sum(len(x.get('사진') or '') for x in d['quests'])
-                                if used + len(encoded) > 15 * 1024 * 1024:
-                                    raise ValueError('사진 보관 한도에 도달했습니다. 이 세션에는 사진을 더 보관할 수 없습니다.')
-                                q['사진'] = encoded
-                                transition_quest(q, '사진으로 미션 완료', actor)
-                                st.rerun()
-                            except ValueError as exc:
-                                st.error(str(exc))
-                    if actor==q['등록자'] and q['상태']=='지급 대기':
-                        paid = st.checkbox('실제로 미션금을 주었습니다.', key='paid_'+q['id'])
-                        if st.button('미션금 지급 완료', key='pay_'+q['id'], disabled=not paid, use_container_width=True):
-                            transition_quest(q, '지급 완료', actor)
+                completed = [n[q['담당']] for q in group if q['상태'] != '진행 중']
+                st.write('완료한 가족: '+(' · '.join(completed) if completed else '아직 없어요'))
+                st.divider()
+                st.write('**📷 사진 올리고 미션 완료하기**')
+                selected = large_choice('사진을 제출하거나 확인할 가족',
+                    [q['담당'] for q in group], format_func=n.get, key='submitter_'+first['id'])
+                q = next(item for item in group if item['담당']==selected)
+                st.write('상태: '+{'진행 중':'진행 중', '지급 대기':'미션 완료 · 미션금 받을 예정', '지급 완료':'미션 완료 · 미션금 받음'}.get(q['상태'],q['상태']))
+                if q.get('사진'):
+                    st.image(base64.b64decode(q['사진']), caption=n[selected]+'의 완료 사진', use_container_width=True)
+                if q['상태']=='진행 중':
+                    photo = st.file_uploader('완료 사진 선택하기', type=['jpg','jpeg','png','webp'], key='photo_'+q['id'])
+                    st.caption('선택한 가족 본인이 제출해 주세요. 현재 사용자 선택과 관계없이 이곳에서 사진을 올릴 수 있어요. 얼굴·주소는 피하고 10MB 이하 사진을 선택하세요.')
+                    if st.button('📷 사진 제출하고 미션 완료!', key='finish_'+q['id'], disabled=photo is None, use_container_width=True):
+                        try:
+                            encoded = prepare_photo(photo.getvalue())
+                            if sum(len(x.get('사진') or '') for x in d['quests'])+len(encoded)>15*1024*1024:
+                                raise ValueError('사진 보관 한도에 도달했습니다.')
+                            q['사진'] = encoded
+                            transition_quest(q, '사진으로 미션 완료', selected)
                             st.rerun()
+                        except ValueError as exc:
+                            st.error(str(exc))
+                if actor==q['등록자'] and q['상태']=='지급 대기':
+                    paid = st.checkbox('실제로 미션금을 주었습니다.', key='paid_'+q['id'])
+                    if st.button('미션금 지급 완료', key='pay_'+q['id'], disabled=not paid, use_container_width=True):
+                        transition_quest(q, '지급 완료', actor)
+                        st.rerun()
     with tab3:
         frame = pd.DataFrame(quest_summary(d))
         own = next(row for row in quest_summary(d) if row['구성원']==n[actor])
@@ -449,23 +453,33 @@ def meals(d):
     tab1, tab2 = st.tabs(['가능 시간 찾기', '식사 기록·분석'])
     with tab1:
         who = large_choice('가능 시간을 등록할 가족', list(n), format_func=n.get)
-        existing = [f"{r['요일']}요일 {r['끼니']}" for r in d['availability'] if r['구성원'] == who]
+        st.write('요일별로 아침·점심·저녁 버튼만 눌러 주세요.')
         with st.form('availability_'+who):
-            slots = visible_checks('매주 함께 식사 가능한 시간', [f'{day}요일 {slot}' for day in DAYS for slot in SLOTS], default=existing)
-            if st.form_submit_button('가능 시간 저장'):
-                d['availability'] = [r for r in d['availability'] if r['구성원'] != who]
-                for value in slots:
-                    day, slot = value.split('요일 ')
-                    d['availability'].append({'구성원': who, '요일': day, '끼니': slot})
+            selected_slots = {}
+            for day_name in DAYS:
+                st.write('**'+day_name+'요일**')
+                existing = [r['끼니'] for r in d['availability'] if r['구성원']==who and r['요일']==day_name]
+                selected_slots[day_name] = st.pills(day_name+'요일 가능한 끼니', SLOTS,
+                    selection_mode='multi', default=existing, key='avail_'+who+'_'+day_name,
+                    label_visibility='collapsed') or []
+                if day_name != DAYS[-1]:
+                    st.divider()
+            if st.form_submit_button('식사 가능 시간 저장', use_container_width=True):
+                d['availability'] = [r for r in d['availability'] if r['구성원']!=who]
+                for day_name, chosen in selected_slots.items():
+                    for meal in chosen:
+                        d['availability'].append({'구성원':who,'요일':day_name,'끼니':meal})
                 st.rerun()
         result = meal_candidates(d)
         if result:
-            st.subheader('많이 모일 수 있는 정기 식사 후보')
-            st.dataframe(pd.DataFrame([{'요일': r['요일'], '끼니': r['끼니'], '가능 인원': r['가능 인원'],
-                                        '가족': ', '.join(n[i] for i in r['참여'])} for r in result]), hide_index=True)
-            st.write('실천 방법: 상위 후보를 가족 일정에 고정하고, 장보기와 조리 담당을 나누세요. 가능한 사람이 적다면 요일이나 끼니를 바꿔 다시 합의하세요.')
+            st.subheader('함께 먹기 좋은 시간 TOP 3')
+            for candidate in result[:3]:
+                with st.container(border=True):
+                    st.write(f"**{candidate['요일']}요일 {candidate['끼니']} · {candidate['가능 인원']}명**")
+                    st.write(' · '.join(n[i] for i in candidate['참여']))
+            st.write('이 중 한 끼부터 함께 먹어 보세요.')
         else:
-            st.info('겹치는 시간이 아직 없습니다. 두 명 이상의 일정을 등록하거나 20분의 짧은 식사부터 합의해 보세요.')
+            st.info('가족 두 명 이상이 가능한 끼니를 등록하면 함께 먹기 좋은 시간을 추천해요.')
     with tab2:
         with st.form('meal_add', clear_on_submit=True):
             day = st.date_input('식사한 날짜', max_value=date.today())
