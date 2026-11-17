@@ -427,15 +427,35 @@ def quests(d):
         st.metric('내가 받은 미션금', f"{own['받은 미션금(원)']:,}원")
         if d['quests']:
             st.subheader('가족별 미션 현황')
-            for row in quest_summary(d):
-                total = int(row['배정 미션(개)'])
+            rows = quest_summary(d)
+            bars = []
+            for row in rows:
                 done = int(row['완료 미션(개)'])
-                with st.container(border=True):
-                    st.write('**'+row['구성원']+'**')
-                    st.write(f'전체 {total}개 · 완료 {done}개 · 남은 {max(0, total-done)}개')
-                    if total:
-                        st.progress(min(1.0, done / total))
-                    st.write(f"받을 미션금 {row['받을 미션금(원)']:,}원 · 받은 미션금 {row['받은 미션금(원)']:,}원")
+                left = max(0, int(row['배정 미션(개)']) - done)
+                bars.extend([{'가족':row['구성원'], '상태':'완료', '미션 수':done},
+                             {'가족':row['구성원'], '상태':'남음', '미션 수':left}])
+            fig = px.bar(pd.DataFrame(bars), x='미션 수', y='가족', color='상태',
+                         orientation='h', barmode='stack', text='미션 수',
+                         color_discrete_map={'완료':'#1751D0', '남음':'#D9DFEA'},
+                         category_orders={'가족':[r['구성원'] for r in rows], '상태':['완료','남음']})
+            fig.update_traces(width=0.30, texttemplate='%{text}', textposition='inside',
+                              insidetextanchor='middle', textfont_size=18,
+                              hovertemplate='%{y}: %{x}개<extra>%{fullData.name}</extra>')
+            # Hide zero-value labels without hiding families with no assigned missions.
+            for trace in fig.data:
+                trace.text = [str(int(value)) if value else '' for value in trace.x]
+            largest = max((int(r['배정 미션(개)']) for r in rows), default=0)
+            fig.update_layout(height=max(260, 65*len(rows)+90),
+                              margin=dict(l=0,r=16,t=10,b=10),
+                              font=dict(size=18), plot_bgcolor='#FDFDFF', paper_bgcolor='#FDFDFF',
+                              legend=dict(title=None,orientation='h',y=1.12,x=0),
+                              xaxis_title=None,yaxis_title=None, bargap=0.7,
+                              uniformtext_minsize=16,uniformtext_mode='hide')
+            fig.update_xaxes(rangemode='tozero', range=[0,max(1,largest)*1.08],
+                             dtick=max(1,math.ceil(largest/5)), showgrid=True,gridcolor='#EEF0F4',zeroline=False)
+            fig.update_yaxes(showgrid=False, ticks='')
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar':False,'staticPlot':True})
+            st.caption('숫자는 미션 개수예요. 파랑은 완료, 연회색은 남은 미션입니다.')
             active = [row for row in quest_summary(d) if row['배정 미션(개)']]
             if len(active)>1:
                 most = max(active, key=lambda row:row['배정 미션(개)'])
