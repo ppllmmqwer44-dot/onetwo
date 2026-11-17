@@ -385,12 +385,17 @@ def quests(d):
             st.write('아직 미션이 없어요. 미션 등록에서 가족의 첫 미션을 만들어 주세요.')
         for group in reversed(visible):
             first = group[0]
+            my_record = next((item for item in group if item['담당']==actor), None)
+            card_done = (my_record is not None and my_record['상태'] in ('지급 대기','지급 완료')) or all(item['상태'] in ('지급 대기','지급 완료') for item in group)
             with st.container(border=True):
-                st.subheader('🎯 '+first['제목'])
+                if card_done:
+                    st.markdown('<span class="completed-mission-marker"></span>', unsafe_allow_html=True)
+                    st.success('✓ 내가 완료한 미션' if my_record else '✓ 모두 완료한 미션')
+                st.subheader(('✓ ' if card_done else '🎯 ')+first['제목'])
                 st.write('등록한 가족: '+n[first['등록자']])
                 st.divider()
                 st.write('**함께할 가족**')
-                st.write(' · '.join(n[q['담당']] for q in group))
+                st.write(' · '.join(('✓ ' if q['상태'] in ('지급 대기','지급 완료') else '')+n[q['담당']] for q in group))
                 if len({q['용돈'] for q in group}) == 1:
                     st.write(f"💰 1인당 미션금 {first['용돈']:,}원")
                 else:
@@ -402,10 +407,12 @@ def quests(d):
                 completed = [n[q['담당']] for q in group if q['상태'] != '진행 중']
                 st.write('완료한 가족: '+(' · '.join(completed) if completed else '아직 없어요'))
                 st.divider()
-                st.write('**📷 사진 올리고 미션 완료하기**')
+                st.write('**📷 완료 사진·진행 상태**')
                 selected = large_choice('사진을 제출하거나 확인할 가족',
                     [q['담당'] for q in group], format_func=n.get, key='submitter_'+first['id'])
                 q = next(item for item in group if item['담당']==selected)
+                if q['상태'] in ('지급 대기','지급 완료'):
+                    st.success('✓ '+n[selected]+'님 완료 · 미션금 적립됨')
                 st.write('상태: '+{'진행 중':'진행 중', '지급 대기':'미션 성공 · 적립 완료 (현금 지급 대기)', '지급 완료':'미션 완료 · 미션금 받음'}.get(q['상태'],q['상태']))
                 if q.get('사진'):
                     st.image(base64.b64decode(q['사진']), caption=n[selected]+'의 완료 사진', use_container_width=True)
@@ -440,23 +447,18 @@ def quests(d):
         if d['quests']:
             st.subheader('가족별 미션 현황')
             rows = quest_summary(d)
-            bars = []
-            for row in rows:
-                done = int(row['완료 미션(개)'])
-                left = max(0, int(row['배정 미션(개)']) - done)
-                bars.extend([{'가족':row['구성원'], '상태':'완료', '미션 수':done},
-                             {'가족':row['구성원'], '상태':'남음', '미션 수':left}])
-            fig = px.bar(pd.DataFrame(bars), x='미션 수', y='가족', color='상태',
-                         orientation='h', barmode='stack', text='미션 수',
-                         color_discrete_map={'완료':'#21854B', '남음':'#D9DFEA'},
-                         category_orders={'가족':[r['구성원'] for r in rows], '상태':['완료','남음']})
+            bars = [{'가족':row['구성원'], '미션 수':int(row['완료 미션(개)'])} for row in rows]
+            fig = px.bar(pd.DataFrame(bars), x='미션 수', y='가족',
+                         orientation='h', text='미션 수',
+                         color_discrete_sequence=['#21854B'],
+                         category_orders={'가족':[r['구성원'] for r in rows]})
             fig.update_traces(width=0.30, texttemplate='%{text}', textposition='inside',
                               insidetextanchor='middle', textfont_size=18, textangle=0,
                               hovertemplate='%{y}: %{x}개<extra>%{fullData.name}</extra>')
             # Hide zero-value labels without hiding families with no assigned missions.
             for trace in fig.data:
                 trace.text = [str(int(value)) if value else '' for value in trace.x]
-            largest = max((int(r['배정 미션(개)']) for r in rows), default=0)
+            largest = max((int(r['완료 미션(개)']) for r in rows), default=0)
             fig.update_layout(height=max(260, 65*len(rows)+90),
                               margin=dict(l=0,r=16,t=10,b=10),
                               font=dict(size=18), plot_bgcolor='#FDFDFF', paper_bgcolor='#FDFDFF',
@@ -467,7 +469,7 @@ def quests(d):
                              dtick=max(1,math.ceil(largest/5)), showgrid=True,gridcolor='#EEF0F4',zeroline=False)
             fig.update_yaxes(showgrid=False, ticks='')
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar':False,'staticPlot':True})
-            st.caption('숫자는 미션 개수예요. 파랑은 완료, 연회색은 남은 미션입니다.')
+            st.caption('완료한 미션만 표시해요. 미완료 미션은 그래프에 포함하지 않아요.')
             active = [row for row in quest_summary(d) if row['배정 미션(개)']]
             if len(active)>1:
                 most = max(active, key=lambda row:row['배정 미션(개)'])
@@ -745,12 +747,16 @@ def main():
     [role="tab"][aria-selected="true"] {color:#21854B !important;border-color:#21854B !important;}
     [data-testid="stTabs"] [data-baseweb="tab-highlight"] {background:#21854B !important;}
     .brand {background:#FFFFFF !important;border:1px solid #DDDDDD;}
+    [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"] .completed-mission-marker),
+    [data-testid="stVerticalBlockBorderWrapper"]:has(.completed-mission-marker):not(:has([data-testid="stVerticalBlockBorderWrapper"] .completed-mission-marker)) {
+        background:#F1F7F3 !important; border-color:#91B89D !important;
+    }
     </style>''', unsafe_allow_html=True)
     if 'data' not in st.session_state:
         st.session_state.data = empty_data()
     if not st.session_state.get('splash_seen', False):
         splash = st.empty()
-        splash.markdown(f'<div style="height:65vh;display:flex;align-items:center;justify-content:center"><img alt="우리家 밸런스 로고" src="data:image/png;base64,{APP_ICON}" style="width:180px;height:180px;border-radius:40px"></div>', unsafe_allow_html=True)
+        splash.markdown(f'<div role="status" aria-label="우리家 밸런스 시작 화면" style="position:fixed;inset:0;z-index:999999;background:#FFFFFF;display:flex;align-items:center;justify-content:center;height:100dvh;width:100vw;"><img alt="우리家 밸런스 로고" src="data:image/png;base64,{APP_ICON}" style="display:block;width:clamp(220px,64vw,340px);max-width:80vw;height:auto;aspect-ratio:1;border-radius:22%;object-fit:contain;"></div>', unsafe_allow_html=True)
         time.sleep(2)
         st.session_state.splash_seen = True
         splash.empty()
