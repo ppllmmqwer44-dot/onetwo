@@ -185,7 +185,7 @@ def weekly_meals(d):
 
 def chart(frame, x, y, title, line=False):
     if frame.empty:
-        st.info('표시할 기록이 없습니다.')
+        st.write('표시할 기록이 없습니다.')
         return
     maker = px.line if line else px.bar
     fig = maker(frame, x=x, y=y, title=title, color_discrete_sequence=COLORS)
@@ -202,7 +202,7 @@ def names(d):
 
 def require_family(d):
     if not d['members']:
-        st.info('아직 등록한 가족이 없어요. 아래 버튼으로 가족 이름부터 등록해 주세요.')
+        st.write('아직 등록한 가족이 없어요. 아래 버튼으로 가족 이름부터 등록해 주세요.')
         st.button('👨‍👩‍👧‍👦 가족 등록하러 가기', on_click=go_page, args=('가족 설정',), key='register_family_now', use_container_width=True, type='primary')
         return False
     return True
@@ -240,7 +240,7 @@ def settings(d):
         for member in d['members']:
             st.success('👤 '+member['이름'])
     else:
-        st.info('아래에 첫 번째 가족의 이름이나 호칭을 입력해 주세요.')
+        st.write('아래에 첫 번째 가족의 이름이나 호칭을 입력해 주세요.')
     st.subheader('가족 한 명 추가하기')
     with st.form('custom_family', clear_on_submit=True):
         name = st.text_input('이름 또는 가족 호칭', max_chars=20, placeholder='예: 나, 엄마, 아빠, 첫째 오빠')
@@ -268,7 +268,6 @@ def settings(d):
                     else:
                         member.update({'이름': clean, '걸음 목표': goal, '수면 목표': sl})
                         st.rerun()
-    st.caption('가족 등록은 현재 접속 중인 화면에만 저장됩니다. 새로고침·재접속 시 사라질 수 있으며 다른 휴대폰과 자동 공유되지 않습니다.')
     with st.expander('전체 기록 초기화'):
         agreed = st.checkbox('사진과 미션금을 포함한 모든 기록 삭제에 동의합니다.', key='reset_consent')
         if st.button('전체 기록 초기화', disabled=not agreed, use_container_width=True):
@@ -326,14 +325,14 @@ def home(d):
     if not require_family(d):
         return
     st.subheader('오늘의 실천 제안')
-    st.info('집안일 퀘스트에서 미션을 고르고, 완료 사진을 올려 미션금을 모아 보세요. 시간 제한은 없어요.')
+    st.write('집안일 퀘스트에서 미션을 고르고, 완료 사진을 올려 미션금을 모아 보세요. 시간 제한은 없어요.')
     candidates = meal_candidates(d)
     if candidates:
         best = candidates[0]
         st.success(f"매주 {best['요일']}요일 {best['끼니']}에 {best['가능 인원']}명이 식사할 수 있어요. 메뉴와 준비 담당을 함께 정해 보세요.")
     else:
-        st.info('함께 식사 메뉴에서 가능한 요일과 끼니를 등록해 보세요.')
-    st.info('부모님 건강 메뉴에서 기록과 병원 상담 안내를 확인하세요. 응급 증상은 기록보다 119 도움을 우선하세요.')
+        st.write('함께 식사 메뉴에서 가능한 요일과 끼니를 등록해 보세요.')
+    st.write('부모님 건강 메뉴에서 기록과 병원 상담 안내를 확인하세요. 응급 증상은 기록보다 119 도움을 우선하세요.')
 
 
 def group_missions(quests):
@@ -351,8 +350,6 @@ def quests(d):
         return
     n = names(d)
     st.write('할 일을 끝내고 사진을 올리면 미션 완료! 정해진 시간이나 마감일은 없어요.')
-    st.info('미션금은 앱 안의 지급 예정 기록입니다. 실제 송금은 하지 않습니다. 사진 내용은 자동 판정하지 않습니다.')
-    st.caption('사용자 선택은 로그인 인증이 아닙니다. 현재 접속 세션만 저장되며 가족 휴대폰 간 자동 공유되지 않습니다.')
     actor = large_choice('누가 사용하나요?', list(n), format_func=n.get, key='quest_actor')
     tab1, tab2, tab3 = st.tabs(['내 미션', '미션 등록', '미션금·가족 분담'])
     with tab2:
@@ -378,7 +375,7 @@ def quests(d):
         groups = group_missions(d['quests'])
         visible = [group for group in groups if any(actor in [q['담당'], q['등록자']] for q in group)]
         if not visible:
-            st.info('아직 미션이 없어요. 미션 등록에서 가족의 첫 미션을 만들어 주세요.')
+            st.write('아직 미션이 없어요. 미션 등록에서 가족의 첫 미션을 만들어 주세요.')
         for group in reversed(visible):
             first = group[0]
             with st.container(border=True):
@@ -429,17 +426,24 @@ def quests(d):
         st.metric('내가 받을 미션금', f"{own['받을 미션금(원)']:,}원")
         st.metric('내가 받은 미션금', f"{own['받은 미션금(원)']:,}원")
         if d['quests']:
-            chart(frame, '구성원', ['배정 미션(개)', '완료 미션(개)'], '가족별 미션 수')
-            st.dataframe(frame, hide_index=True)
+            st.subheader('가족별 미션 현황')
+            for row in quest_summary(d):
+                total = int(row['배정 미션(개)'])
+                done = int(row['완료 미션(개)'])
+                with st.container(border=True):
+                    st.write('**'+row['구성원']+'**')
+                    st.write(f'전체 {total}개 · 완료 {done}개 · 남은 {max(0, total-done)}개')
+                    if total:
+                        st.progress(min(1.0, done / total))
+                    st.write(f"받을 미션금 {row['받을 미션금(원)']:,}원 · 받은 미션금 {row['받은 미션금(원)']:,}원")
             active = [row for row in quest_summary(d) if row['배정 미션(개)']]
             if len(active)>1:
                 most = max(active, key=lambda row:row['배정 미션(개)'])
                 least = min(active, key=lambda row:row['배정 미션(개)'])
                 if most['배정 미션(개)']-least['배정 미션(개)']>=2:
-                    st.info(f"{most['구성원']}에게 미션이 더 많이 배정되어 있어요. 다음 미션은 {least['구성원']}에게 부탁해 보세요.")
-            st.write('미션 수만으로 공정성을 단정할 수 없어요. 난이도와 가족 상황을 함께 고려하고, 비슷한 일에는 비슷한 미션금을 정해 주세요.')
+                    st.write(f"{most['구성원']}에게 미션이 더 많이 배정되어 있어요. 다음 미션은 {least['구성원']}에게 부탁해 보세요.")
         else:
-            st.info('미션을 등록하면 분담과 미션금 분석이 나타나요.')
+            st.write('미션을 등록하면 분담과 미션금 분석이 나타나요.')
 
 
 def meals(d):
@@ -479,7 +483,7 @@ def meals(d):
                     st.write(' · '.join(n[i] for i in candidate['참여']))
             st.write('이 중 한 끼부터 함께 먹어 보세요.')
         else:
-            st.info('가족 두 명 이상이 가능한 끼니를 등록하면 함께 먹기 좋은 시간을 추천해요.')
+            st.write('가족 두 명 이상이 가능한 끼니를 등록하면 함께 먹기 좋은 시간을 추천해요.')
     with tab2:
         with st.form('meal_add', clear_on_submit=True):
             day = st.date_input('식사한 날짜', max_value=date.today())
@@ -573,50 +577,35 @@ def health(d):
     if urgent:
         st.error(urgent)
     elif consultation:
-        st.info(consultation)
+        st.write(consultation)
     else:
-        st.info('증상을 선택하면 상담 안내를 드립니다. 선택하지 않았다고 건강에 이상이 없다는 뜻은 아닙니다.')
+        st.write('증상을 선택하면 상담 안내를 드립니다. 선택하지 않았다고 건강에 이상이 없다는 뜻은 아닙니다.')
     for symptom in symptoms:
         with st.container(border=True):
             st.subheader(symptom)
             for heading, detail in HEALTH_DETAILS[symptom].items():
                 st.write('**'+heading+'**')
                 st.write(detail)
-    st.caption('정보 확인 기준: 2026-11-13. 영국 NHS 환자 안내를 참고하고 한국 응급전화 119로 안내합니다. 개인별 진료 판단은 의료진에게 확인하세요.')
-    st.markdown('참고: [흉통](https://www.nhs.uk/symptoms/chest-pain/) · [뇌졸중 증상](https://www.nhs.uk/conditions/stroke/symptoms/) · [실신](https://www.nhs.uk/symptoms/fainting/) · [혈압 측정](https://www.nhs.uk/conditions/high-blood-pressure-hypertension/) · [수면 무호흡](https://www.nhs.uk/conditions/sleep-apnoea/)')
     st.write('아래 안내는 자가 입력에 따른 일반적인 도움말입니다. 기록만으로 질병을 판단하거나 약을 바꾸지 마세요.')
     if not require_family(d):
         return
     n = names(d)
     who = large_choice('건강을 살펴볼 가족', list(n), format_func=n.get)
     member = next(m for m in d['members'] if m['id'] == who)
-    st.caption('당사자의 동의를 받고 기록하세요. 0은 실제 0으로 분석되므로 측정한 항목만 확인해 입력하세요. 혈압은 선택 사항입니다.')
     with st.form('health_add_'+who, clear_on_submit=True):
         day = st.date_input('기록 날짜', max_value=date.today())
         steps = st.number_input('하루 걸음 수(보)', 0, 100000, 0, 100)
         sleep = st.number_input('수면 시간(시간)', 0.0, 24.0, 7.0, 0.5)
-        bp = st.checkbox('혈압도 함께 기록')
-        st.caption('혈압 체크 후 수치를 입력하고 저장하세요. 혈압은 의학적 정상 여부를 자동 판정하지 않습니다.')
-        systolic = st.number_input('수축기 혈압(mmHg)', 50, 300, 120)
-        diastolic = st.number_input('이완기 혈압(mmHg)', 30, 200, 80)
-        memo = st.text_area('몸 상태·진료 때 물어볼 점', max_chars=500)
-        confirmed = st.checkbox('걸음과 수면은 실제 확인한 값입니다.')
-        if st.form_submit_button('건강 기록 저장 · 같은 날짜는 수정'):
-            if not confirmed:
-                st.error('걸음과 수면 값을 확인해 주세요.')
-            elif bp and systolic <= diastolic:
-                st.error('수축기 혈압은 이완기 혈압보다 커야 합니다.')
-            else:
-                d['health'] = [r for r in d['health'] if not (r['구성원'] == who and r['날짜'] == str(day))]
-                d['health'].append({'id': uid(), '구성원': who, '날짜': str(day), '걸음': steps,
-                                    '수면': sleep, '수축기': systolic if bp else None,
-                                    '이완기': diastolic if bp else None, '메모': memo})
-                st.rerun()
+        if st.form_submit_button('건강 기록 저장', use_container_width=True):
+            d['health'] = [r for r in d['health'] if not (r['구성원'] == who and r['날짜'] == str(day))]
+            d['health'].append({'id': uid(), '구성원': who, '날짜': str(day),
+                                '걸음': steps, '수면': sleep, '수축기': None, '이완기': None, '메모': ''})
+            st.rerun()
     period = large_choice('분석 기간', [7, 14, 30], format_func=lambda x: f'최근 {x}일')
     start = date.today() - timedelta(days=period-1)
     records = sorted([r for r in d['health'] if r['구성원'] == who and start <= date.fromisoformat(r['날짜']) <= date.today()], key=lambda r: r['날짜'])
     if not records:
-        st.info('선택한 기간의 기록이 없습니다.')
+        st.write('첫 건강 기록을 남겨 보세요.')
     else:
         frame = pd.DataFrame(records)
         mean_steps, mean_sleep = frame['걸음'].mean(), frame['수면'].mean()
@@ -624,17 +613,15 @@ def health(d):
         a.metric('기록일 평균 걸음', f'{mean_steps:,.0f}보')
         b.metric('기록일 평균 수면', f'{mean_sleep:.1f}시간')
         c.metric('기록 일수', f'{len(records)} / {period}일')
-        st.caption('누락 날짜는 0으로 계산하지 않습니다. 그래프는 달력 날짜를 채워 누락 구간을 끊어 표시합니다. 기록일 평균만으로 전체 기간을 판단하지 마세요.')
         steps_rate = 100 * sum(r['걸음'] >= member['걸음 목표'] for r in records) / len(records)
         sleep_rate = 100 * sum(r['수면'] >= member['수면 목표'] for r in records) / len(records)
         st.write(f"개인 목표 충족일 비율: 걸음 {steps_rate:.0f}% · 수면 {sleep_rate:.0f}% (분모: 기록일 {len(records)}일)")
-        st.caption('수면 목표 충족은 설정 시간 이상이라는 뜻이며, 길수록 건강하다는 의미는 아닙니다.')
         if mean_steps < member['걸음 목표']:
-            st.info(f"걷기 실천: 기록일 평균이 개인 목표보다 {member['걸음 목표']-mean_steps:,.0f}보 적습니다. 무리하지 않는 범위에서 짧은 산책을 가족과 나눠 시도하세요.")
+            st.write(f"걷기 실천: 기록일 평균이 개인 목표보다 {member['걸음 목표']-mean_steps:,.0f}보 적습니다. 무리하지 않는 범위에서 짧은 산책을 가족과 나눠 시도하세요.")
         else:
             st.success('걷기: 설정한 개인 목표를 평균적으로 충족했습니다. 통증이나 피로가 있으면 운동량을 조절하고 상담하세요.')
         if mean_sleep < member['수면 목표']:
-            st.info('수면 실천: 설정한 수면 목표보다 평균이 짧습니다. 일정한 취침 시간과 편안한 수면 환경을 함께 준비하세요.')
+            st.write('수면 실천: 설정한 수면 목표보다 평균이 짧습니다. 일정한 취침 시간과 편안한 수면 환경을 함께 준비하세요.')
         else:
             st.write('수면: 설정한 시간 목표 이상입니다. 과도한 졸림이나 수면 불편이 있으면 별도로 상담하세요.')
         calendar = pd.DataFrame({'날짜': pd.date_range(start, date.today()).strftime('%Y-%m-%d')})
@@ -643,11 +630,7 @@ def health(d):
         plotted['수면 목표'] = member['수면 목표']
         chart(plotted, '날짜', ['걸음', '걸음 목표'], '걸음 수와 개인 목표(보)', True)
         chart(plotted, '날짜', ['수면', '수면 목표'], '수면 시간과 개인 목표(시간)', True)
-        blood = frame[frame['수축기'].notna()]
-        if not blood.empty:
-            chart(plotted, '날짜', ['수축기', '이완기'], '기록한 혈압 추이(mmHg) · 의료진 상담 참고', True)
-            st.caption('혈압 수치가 걱정되거나 반복해서 평소와 다르면 측정 방법을 확인하고 의료진과 상담하세요. 앱을 근거로 약을 변경하지 마세요.')
-        show = frame.drop(columns=['id', '구성원']).rename(columns={'걸음': '걸음(보)', '수면': '수면(시간)', '수축기': '수축기(mmHg)', '이완기': '이완기(mmHg)'})
+        show = frame[['날짜', '걸음', '수면']].rename(columns={'걸음':'걸음(보)', '수면':'수면(시간)'})
         st.dataframe(show, hide_index=True)
         st.download_button('선택 기간 건강 기록 CSV', show.to_csv(index=False).encode('utf-8-sig'),
                            file_name='건강기록.csv', mime='text/csv')
@@ -724,7 +707,6 @@ def main():
     {'홈': home, '집안일 퀘스트': quests, '함께 식사': meals,
      '부모님 건강': health, '가족 설정': settings}[page](d)
     st.divider()
-    st.caption('우리家 밸런스 | 분석은 입력 데이터와 공개된 계산 규칙을 사용합니다. 외부 AI 전송 없음. 실시간 가족 공유·로그인은 포함되지 않습니다.')
 
 
 if __name__ == '__main__':
