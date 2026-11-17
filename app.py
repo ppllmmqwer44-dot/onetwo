@@ -583,30 +583,45 @@ def care_advice(symptoms):
 
 def health(d):
     st.header('💚 부모님 건강')
-    st.warning('생활 습관 참고용이며 진단·치료·복약 지시를 제공하지 않습니다. 개인 목표는 연령·건강 상태에 맞춰 의료진과 정하세요. 흉통, 호흡곤란, 갑작스러운 마비·언어 장애 등 급성 증상은 수치와 관계없이 119 또는 응급실 도움을 받으세요.')
-    st.subheader('지금 병원 도움이 필요한가요?')
-    st.write('가벼운 불편은 생활 관리 방법을 참고해 보세요. 진단이 아니며, 증상이 심해지거나 위험 신호가 있으면 진료를 우선하세요.')
-    symptoms = visible_checks('요즘 어떤 점이 불편한가요? 여러 개 눌러도 돼요.',
-                               list(DAILY_DETAILS), key='daily_symptoms')
-    with st.expander('응급 신호 확인 · 해당될 때만 펼쳐 주세요'):
-        st.write('지속되는 갑작스러운 흉통·심한 숨참, 갑작스러운 마비·말 이상, 깨우기 어려움은 즉시 119에 도움을 요청하세요.')
-        urgent_symptoms = visible_checks('응급 증상',
+    st.caption('생활 관리 참고용 · 진단은 의료진에게')
+    st.subheader('어디가 불편하세요?')
+    short_labels = dict(zip(DAILY_DETAILS,
+        ['눈 피로', '목·어깨', '허리', '두통', '어지럼', '더부룩함', '배변 불편', '코·목', '수면', '피로']))
+    symptoms = visible_checks('증상을 눌러 주세요', list(DAILY_DETAILS),
+                              format_func=short_labels.get, key='daily_symptoms')
+    st.divider()
+    st.caption('심한 흉통·숨참, 갑작스러운 마비·말 이상, 의식 저하는 즉시 119')
+    with st.expander('응급 신호 확인'):
+        urgent_symptoms = visible_checks('해당하는 증상',
             ['흉통 또는 심한 호흡곤란', '갑작스러운 마비 또는 언어 장애', '의식 저하 또는 실신'], key='urgent_symptoms')
-    symptoms = urgent_symptoms + symptoms
-    urgent, consultation = care_advice(symptoms)
-    if urgent:
-        st.error(urgent)
-    elif consultation:
-        st.write(consultation)
-    else:
-        st.write('증상을 선택하면 상담 안내를 드립니다. 선택하지 않았다고 건강에 이상이 없다는 뜻은 아닙니다.')
-    for symptom in symptoms:
-        with st.container(border=True):
-            st.subheader(symptom)
+        for symptom in urgent_symptoms:
+            st.error('지금 증상이 있으면 즉시 119에 연락하세요. 직접 운전하지 마세요.')
             for heading, detail in HEALTH_DETAILS[symptom].items():
                 st.write('**'+heading+'**')
                 st.write(detail)
-    st.write('아래 안내는 자가 입력에 따른 일반적인 도움말입니다. 기록만으로 질병을 판단하거나 약을 바꾸지 마세요.')
+    quick_tips = {
+        '눈이 피로하거나 뻑뻑해요':'화면을 잠깐 멈추고 먼 곳을 보세요. 눈은 비비지 마세요.',
+        '목·어깨가 뻐근해요':'자세를 바꾸고 아프지 않은 범위에서 부드럽게 움직여 보세요.',
+        '허리가 뻐근해요':'무거운 물건은 피하고, 가능한 범위에서 짧게 걸어 보세요.',
+        '가벼운 두통이 있어요':'조용한 곳에서 쉬고, 끼니와 수분을 챙겨 보세요.',
+        '일어날 때 잠깐 어지러워요':'먼저 앉아 쉬고, 일어날 때는 천천히 움직이세요. 운전은 피하세요.',
+        '속이 더부룩하거나 가스가 차요':'천천히 먹고 과식을 줄여 보세요. 식후 가볍게 걸어 보세요.',
+        '변이 딱딱하고 보기 힘들어요':'식이섬유를 서서히 늘리고 변의를 참지 마세요. 수분 제한이 없다면 물도 챙기세요.',
+        '코가 막히거나 목이 칼칼해요':'충분히 쉬고 담배 연기를 피하세요. 마실 수 있는 만큼 수분을 챙기세요.',
+        '잠들기 어렵거나 자주 깨요':'기상 시간을 일정하게 하고 늦은 카페인과 잠들기 전 화면 사용을 줄여 보세요.',
+        '쉽게 피곤하고 기운이 없어요':'활동을 작게 나누고 휴식과 규칙적인 식사를 챙겨 보세요.'}
+    for symptom in symptoms:
+        with st.container(border=True):
+            st.subheader(short_labels[symptom])
+            st.write('💡 '+quick_tips[symptom])
+            st.divider()
+            st.write('**진료가 필요한 신호**')
+            st.write(DAILY_DETAILS[symptom]['이럴 때는 상담하세요'])
+            with st.expander('자세히 보기'):
+                st.write(DAILY_DETAILS[symptom]['살펴볼 점'])
+                st.write(DAILY_DETAILS[symptom]['이렇게 해보세요'])
+    st.divider()
+    st.subheader('나의 건강 기록')
     if not require_family(d):
         return
     n = names(d)
