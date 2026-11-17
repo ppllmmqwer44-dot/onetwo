@@ -234,28 +234,16 @@ def add_family_member(d, name):
 
 def settings(d):
     st.header('👨‍👩‍👧‍👦 우리 가족 등록')
-    st.write('파일은 필요 없어요. 가족 호칭 버튼을 누르면 바로 등록됩니다.')
+    st.write('가족 구성원을 한 명씩 입력하고 추가해 주세요. 이름 대신 엄마·첫째 오빠 같은 호칭도 좋아요.')
     if d['members']:
         st.subheader('등록된 우리 가족')
         for member in d['members']:
             st.success('👤 '+member['이름'])
     else:
-        st.info('아직 가족이 없어요. 아래에서 우리 가족을 추가해 주세요.')
-    st.subheader('버튼으로 바로 추가')
-    existing = set(names(d).values())
-    for name in ['나', '엄마', '아빠', '첫째 오빠', '둘째 오빠', '언니', '남동생', '여동생']:
-        registered = name in existing
-        if st.button(('✓ '+name+' · 등록됨') if registered else ('＋ '+name),
-                     key='quick_family_'+name, disabled=registered or len(existing)>=8,
-                     use_container_width=True):
-            try:
-                add_family_member(d, name)
-                st.rerun()
-            except ValueError as exc:
-                st.error(str(exc))
-    st.subheader('원하는 호칭으로 직접 추가')
+        st.info('아래에 첫 번째 가족의 이름이나 호칭을 입력해 주세요.')
+    st.subheader('가족 한 명 추가하기')
     with st.form('custom_family', clear_on_submit=True):
-        name = st.text_input('이름 또는 가족 호칭', max_chars=20, placeholder='예: 할머니, 큰오빠, 막내')
+        name = st.text_input('이름 또는 가족 호칭', max_chars=20, placeholder='예: 나, 엄마, 아빠, 첫째 오빠')
         if st.form_submit_button('입력한 가족 추가하기', use_container_width=True):
             try:
                 add_family_member(d, name)
@@ -312,7 +300,7 @@ def transition_quest(q, action, actor):
         q['완료일'] = str(date.today())
     elif action == '지급 완료':
         if actor != q['등록자'] or q['상태'] != '지급 대기':
-            raise ValueError('등록한 보호자만 지급 완료를 기록할 수 있습니다.')
+            raise ValueError('미션을 등록한 가족만 지급 완료를 기록할 수 있습니다.')
         q['상태'] = '지급 완료'
         q['지급일'] = str(date.today())
     else:
@@ -348,6 +336,15 @@ def home(d):
     st.info('부모님 건강 메뉴에서 기록과 병원 상담 안내를 확인하세요. 응급 증상은 기록보다 119 도움을 우선하세요.')
 
 
+def group_missions(quests):
+    groups = {}
+    for q in quests:
+        # 이전 버전 기록은 제목·설명·등록자·금액이 같으면 함께 표시합니다.
+        key = ('group', q['그룹']) if q.get('그룹') else ('legacy', q['제목'], q.get('설명', ''), q['등록자'], q['용돈'])
+        groups.setdefault(key, []).append(q)
+    return list(groups.values())
+
+
 def quests(d):
     st.header('🎯 집안일 퀘스트')
     if not require_family(d):
@@ -359,55 +356,69 @@ def quests(d):
     actor = large_choice('누가 사용하나요?', list(n), format_func=n.get, key='quest_actor')
     tab1, tab2, tab3 = st.tabs(['내 미션', '미션 등록', '미션금·가족 분담'])
     with tab2:
-        st.subheader('엄마가 직접 미션을 만들어 주세요')
+        st.subheader('가족 누구나 미션을 등록할 수 있어요')
+        st.write('현재 선택한 가족 이름으로 등록됩니다. 여러 담당자를 골라도 미션 카드는 하나로 보여요. 사진 제출과 미션금은 각자 따로 기록해요.')
         with st.form('new_quest', clear_on_submit=True):
             title = st.text_input('어떤 집안일인가요?', max_chars=60, placeholder='예: 설거지하기')
             detail = st.text_area('완료 기준', max_chars=500, placeholder='예: 그릇을 씻고 싱크대까지 정리하기')
             people = visible_checks('누가 할까요?', list(n), format_func=n.get)
             reward = st.number_input('한 사람에게 줄 미션금(원)', 0, 1000000, 2000, 100)
-            consent = st.checkbox('보호자로서 안전과 미션금을 가족과 합의했습니다.')
+            consent = st.checkbox('안전과 미션금을 가족과 합의했습니다.')
             if st.form_submit_button('미션 등록하기', use_container_width=True):
                 if not title.strip() or not people or not consent:
                     st.error('할 일과 담당자를 입력하고 합의를 확인해 주세요.')
                 else:
+                    group_id = uid()
                     for person in people:
-                        d['quests'].append({'id': uid(), '제목': title.strip(), '설명': detail,
+                        d['quests'].append({'id': uid(), '그룹': group_id, '제목': title.strip(), '설명': detail,
                                             '담당': person, '등록자': actor, '용돈': reward,
                                             '상태': '진행 중', '사진': None, '완료일': None, '지급일': None})
                     st.rerun()
     with tab1:
-        visible = [q for q in d['quests'] if actor in [q['담당'], q['등록자']]]
+        groups = group_missions(d['quests'])
+        visible = [group for group in groups if any(actor in [q['담당'], q['등록자']] for q in group)]
         if not visible:
-            st.info('아직 미션이 없어요. 미션 등록을 눌러 우리 가족의 첫 미션을 만들어 주세요.')
-        for q in reversed(visible):
+            st.info('아직 미션이 없어요. 미션 등록에서 가족의 첫 미션을 만들어 주세요.')
+        for group in reversed(visible):
+            first = group[0]
             with st.container(border=True):
-                st.subheader(q['제목'])
-                st.write(f"담당: {n[q['담당']]} · 등록: {n[q['등록자']]}")
-                st.write(f"💰 미션금 {q['용돈']:,}원")
-                st.write('진행 중' if q['상태']=='진행 중' else '🏆 미션 완료 · '+('미션금 받을 예정' if q['상태']=='지급 대기' else '미션금 받음'))
-                if q['설명']:
-                    st.write(q['설명'])
-                if q.get('사진'):
-                    st.image(base64.b64decode(q['사진']), caption='제출한 완료 사진', use_container_width=True)
-                if q['상태']=='진행 중' and actor==q['담당']:
-                    photo = st.file_uploader('완료 사진 올리기', type=['jpg','jpeg','png','webp'], key='photo_'+q['id'])
-                    st.caption('휴대폰의 카메라 또는 사진 보관함에서 선택하세요. 사진에는 얼굴·주소 등 개인정보를 담지 마세요. 원본 최대 10MB이며 저장 시 축소됩니다.')
-                    if st.button('📷 사진 제출하고 미션 완료!', key='finish_'+q['id'], disabled=photo is None, use_container_width=True):
-                        try:
-                            encoded = prepare_photo(photo.getvalue())
-                            used = sum(len(x.get('사진') or '') for x in d['quests'])
-                            if used + len(encoded) > 15 * 1024 * 1024:
-                                raise ValueError('사진 보관 한도에 도달했습니다. 이 세션에는 사진을 더 보관할 수 없습니다.')
-                            q['사진'] = encoded
-                            transition_quest(q, '사진으로 미션 완료', actor)
+                st.subheader('🎯 '+first['제목'])
+                st.write('등록한 가족: '+n[first['등록자']])
+                st.divider()
+                st.write('**함께할 가족**')
+                st.write(' · '.join(n[q['담당']] for q in group))
+                st.write('미션금: '+ ' / '.join(n[q['담당']]+f" {q['용돈']:,}원" for q in group))
+                st.divider()
+                st.write('**완료 기준**')
+                st.write(first['설명'] or '등록한 가족과 완료 기준을 이야기해 주세요.')
+                st.divider()
+                st.write('**가족별 진행 상황**')
+                rows = [{'가족': n[q['담당']], '상태': {'진행 중':'진행 중', '지급 대기':'완료 · 미션금 받을 예정', '지급 완료':'완료 · 미션금 받음'}.get(q['상태'], q['상태']), '미션금(원)': q['용돈']} for q in group]
+                st.table(pd.DataFrame(rows))
+                for q in group:
+                    st.divider()
+                    st.write('**👤 '+n[q['담당']]+' · 사진과 미션금**')
+                    if q.get('사진'):
+                        st.image(base64.b64decode(q['사진']), caption='제출한 완료 사진', use_container_width=True)
+                    if q['상태']=='진행 중' and actor==q['담당']:
+                        photo = st.file_uploader('완료 사진 올리기', type=['jpg','jpeg','png','webp'], key='photo_'+q['id'])
+                        st.caption('휴대폰의 카메라 또는 사진 보관함에서 선택하세요. 사진에는 얼굴·주소 등 개인정보를 담지 마세요. 원본 최대 10MB이며 저장 시 축소됩니다.')
+                        if st.button('📷 사진 제출하고 미션 완료!', key='finish_'+q['id'], disabled=photo is None, use_container_width=True):
+                            try:
+                                encoded = prepare_photo(photo.getvalue())
+                                used = sum(len(x.get('사진') or '') for x in d['quests'])
+                                if used + len(encoded) > 15 * 1024 * 1024:
+                                    raise ValueError('사진 보관 한도에 도달했습니다. 이 세션에는 사진을 더 보관할 수 없습니다.')
+                                q['사진'] = encoded
+                                transition_quest(q, '사진으로 미션 완료', actor)
+                                st.rerun()
+                            except ValueError as exc:
+                                st.error(str(exc))
+                    if actor==q['등록자'] and q['상태']=='지급 대기':
+                        paid = st.checkbox('실제로 미션금을 주었습니다.', key='paid_'+q['id'])
+                        if st.button('미션금 지급 완료', key='pay_'+q['id'], disabled=not paid, use_container_width=True):
+                            transition_quest(q, '지급 완료', actor)
                             st.rerun()
-                        except ValueError as exc:
-                            st.error(str(exc))
-                if actor==q['등록자'] and q['상태']=='지급 대기':
-                    paid = st.checkbox('실제로 미션금을 주었습니다.', key='paid_'+q['id'])
-                    if st.button('미션금 지급 완료', key='pay_'+q['id'], disabled=not paid, use_container_width=True):
-                        transition_quest(q, '지급 완료', actor)
-                        st.rerun()
     with tab3:
         frame = pd.DataFrame(quest_summary(d))
         own = next(row for row in quest_summary(d) if row['구성원']==n[actor])
@@ -519,12 +530,16 @@ HEALTH_DETAILS = {
 }
 
 
+DAILY_DETAILS = {'눈이 피로하거나 뻑뻑해요': {'살펴볼 점': '화면을 오래 보거나 눈을 덜 깜빡이면 불편할 수 있지만 원인을 단정할 수는 없어요.', '이렇게 해보세요': '화면에서 눈을 떼고 먼 곳을 보며 자주 쉬고, 의식적으로 깜빡여 보세요. 눈을 비비지 말고 렌즈가 불편하면 빼 주세요.', '이럴 때는 상담하세요': '갑작스러운 시력 저하나 심한 눈 통증은 즉시 진료가 필요해요. 충혈·불편이 지속되거나 반복되어도 안과 상담을 받아 보세요.'}, '목·어깨가 뻐근해요': {'살펴볼 점': '같은 자세를 오래 유지한 뒤 뻐근할 수 있어요. 다친 적이 있는지도 확인해 주세요.', '이렇게 해보세요': '자세를 자주 바꾸고, 통증 없는 범위에서 부드럽게 움직여 보세요. 온찜질은 천을 사이에 두고 피부가 뜨겁지 않게 해 주세요. 목을 세게 꺾지 마세요.', '이럴 때는 상담하세요': '외상 뒤 통증, 팔의 힘 빠짐·저림 악화, 발열과 심한 목 경직은 빠른 진료가 필요해요. 계속되거나 잠·생활을 방해하면 상담해 보세요.'}, '허리가 뻐근해요': {'살펴볼 점': '오래 앉아 있거나 무리한 일을 한 뒤 불편할 수 있지만 통증만으로 원인을 알 수 없어요.', '이렇게 해보세요': '무거운 물건 들기는 피하고, 가능한 범위에서 짧게 걷거나 일상 활동을 이어가 보세요. 오래 누워만 있거나 아픈 방향으로 억지로 늘리지 마세요.', '이럴 때는 상담하세요': '새로운 소변·대변 조절 이상, 회음부 감각 저하, 양쪽 다리 힘 빠짐은 즉시 응급 진료가 필요해요. 외상·발열이 동반되거나 악화되어도 진료받으세요.'}, '가벼운 두통이 있어요': {'살펴볼 점': '수면 부족·끼니 거르기·긴장과 관련될 수 있지만, 처음 생기거나 평소와 다른 두통은 따로 살펴야 해요.', '이렇게 해보세요': '잠깐 조용한 곳에서 쉬고, 끼니와 수분 섭취가 부족하지 않았는지 확인해 보세요. 약을 자주 반복해서 먹기보다 약사·의료진에게 상담하세요.', '이럴 때는 상담하세요': '갑자기 시작된 극심한 두통, 말·시력·팔다리 이상, 발열과 목 경직이 있으면 즉시 응급 진료가 필요해요. 반복되거나 심해져도 진료받으세요.'}, '일어날 때 잠깐 어지러워요': {'살펴볼 점': '급히 일어날 때 생기는 어지럼은 혈압 변화나 약 등 여러 원인과 관련될 수 있어요.', '이렇게 해보세요': '우선 앉거나 누워 넘어지지 않게 하고, 누운 자세에서 앉기·서기를 천천히 해 보세요. 어지러운 동안 운전하지 말고 복용약은 임의로 끊지 마세요.', '이럴 때는 상담하세요': '실신, 흉통, 마비·말 이상, 걷기 어려움이 동반되면 즉시 도움을 받으세요. 반복되면 측정 기록과 약 목록을 가지고 진료받으세요.'}, '속이 더부룩하거나 가스가 차요': {'살펴볼 점': '빠른 식사나 특정 음식 뒤 불편할 수 있어요. 음식·배변·통증과의 관계를 살펴보세요.', '이렇게 해보세요': '천천히 씹어 먹고 한 번에 과식하지 말아 보세요. 가볍게 걷고, 유독 불편했던 음식이나 탄산음료를 기록해 조절해 보세요.', '이럴 때는 상담하세요': '갑작스럽고 심한 복통, 피 토함·검은 변, 배가 불러오며 대변·가스가 안 나오는 경우는 신속히 진료받으세요. 반복되거나 체중이 줄어도 상담하세요.'}, '변이 딱딱하고 보기 힘들어요': {'살펴볼 점': '배변 횟수뿐 아니라 딱딱한 변·힘주기·잔변감도 살펴보세요. 약이나 생활 변화와 관련될 수 있어요.', '이렇게 해보세요': '채소·과일·통곡물은 서서히 늘리고, 변의를 참지 말고 규칙적으로 화장실에 가 보세요. 수분 제한 지시가 없다면 평소 수분 섭취를 챙기고 가볍게 움직여 보세요.', '이럴 때는 상담하세요': '심한 복통·구토와 가스 배출 불가, 혈변은 진료가 필요해요. 갑자기 배변 습관이 바뀌거나 지속되면 약사·의료진과 상담하세요.'}, '코가 막히거나 목이 칼칼해요': {'살펴볼 점': '감기·알레르기·건조함 등 원인이 다양해요. 발열·기침·호흡 불편이 있는지도 확인해 주세요.', '이렇게 해보세요': '쉬면서 마실 수 있는 만큼 수분을 챙기고 담배 연기 등 자극을 피하세요. 코가 답답하면 약사에게 생리식염수 제품 사용법을 물어보세요.', '이럴 때는 상담하세요': '숨쉬기 어렵거나 침도 삼키기 힘들면 즉시 도움을 받으세요. 고열·탈수·악화가 있거나 면역이 약한 분은 조기에 상담하세요.'}, '잠들기 어렵거나 자주 깨요': {'살펴볼 점': '카페인·낮잠·스트레스·통증 등이 잠에 영향을 줄 수 있어요. 잠든 시간뿐 아니라 낮 생활에 미치는 영향도 중요해요.', '이렇게 해보세요': '기상 시간을 일정하게 하고, 늦은 카페인과 잠자리 직전 화면 사용을 줄여 보세요. 술로 잠을 청하거나 수면제를 임의로 추가하지 마세요.', '이럴 때는 상담하세요': '수면 문제가 계속되어 일상에 지장을 주면 상담을 권해요. 심한 코골이·목격된 숨 멎음·낮 졸림이 있다면 함께 알려 주세요. 졸릴 때는 운전하지 마세요.'}, '쉽게 피곤하고 기운이 없어요': {'살펴볼 점': '수면·식사·활동 변화뿐 아니라 약물이나 여러 질환과 관련될 수 있어요. 단순 피로라고 확정하지 않아요.', '이렇게 해보세요': '하루 활동을 작게 나누고 휴식과 규칙적인 식사를 챙겨 보세요. 무리한 운동 대신 가능한 범위에서 움직이고 피로가 시작된 시점과 수면 상태를 기록하세요.', '이럴 때는 상담하세요': '충분히 쉬어도 지속되거나 체중 감소·발열·두근거림이 동반되면 진료를 권해요. 흉통·심한 숨참·의식 저하는 즉시 119로 도움을 받으세요.'}}
+HEALTH_DETAILS.update(DAILY_DETAILS)
+
+
 def care_advice(symptoms):
     emergency = {'흉통 또는 심한 호흡곤란', '갑작스러운 마비 또는 언어 장애', '의식 저하 또는 실신'}
     if emergency.intersection(symptoms):
         return ('응급 여부를 먼저 확인하세요. 아래 증상별 위험 신호에 해당하거나 현재 심한 증상이 있으면 즉시 119입니다.', None)
     if symptoms:
-        return (None, '선택한 증상별로 진료 시점과 준비할 내용을 확인하세요. 아래 정보는 가능한 원인을 확정하는 진단이 아닙니다.')
+        return (None, '선택한 불편에 맞는 생활 관리 방법을 참고해 보세요. 상담이 필요한 신호도 함께 확인해 주세요.')
     return (None, None)
 
 
@@ -532,15 +547,19 @@ def health(d):
     st.header('💚 부모님 건강')
     st.warning('생활 습관 참고용이며 진단·치료·복약 지시를 제공하지 않습니다. 개인 목표는 연령·건강 상태에 맞춰 의료진과 정하세요. 흉통, 호흡곤란, 갑작스러운 마비·언어 장애 등 급성 증상은 수치와 관계없이 119 또는 응급실 도움을 받으세요.')
     st.subheader('지금 병원 도움이 필요한가요?')
-    symptoms = visible_checks('현재 해당되는 상황을 선택하세요',
-        ['흉통 또는 심한 호흡곤란', '갑작스러운 마비 또는 언어 장애', '의식 저하 또는 실신',
-         '반복되는 어지럼·두통 또는 일상생활 불편', '혈압이 반복해서 평소와 크게 다름',
-         '수면·피로 문제가 계속됨'], key='symptom_check')
+    st.write('가벼운 불편은 생활 관리 방법을 참고해 보세요. 진단이 아니며, 증상이 심해지거나 위험 신호가 있으면 진료를 우선하세요.')
+    symptoms = visible_checks('요즘 어떤 점이 불편한가요? 여러 개 눌러도 돼요.',
+                               list(DAILY_DETAILS), key='daily_symptoms')
+    with st.expander('응급 신호 확인 · 해당될 때만 펼쳐 주세요'):
+        st.write('지속되는 갑작스러운 흉통·심한 숨참, 갑작스러운 마비·말 이상, 깨우기 어려움은 즉시 119에 도움을 요청하세요.')
+        urgent_symptoms = visible_checks('응급 증상',
+            ['흉통 또는 심한 호흡곤란', '갑작스러운 마비 또는 언어 장애', '의식 저하 또는 실신'], key='urgent_symptoms')
+    symptoms = urgent_symptoms + symptoms
     urgent, consultation = care_advice(symptoms)
     if urgent:
         st.error(urgent)
     elif consultation:
-        st.warning(consultation)
+        st.info(consultation)
     else:
         st.info('증상을 선택하면 상담 안내를 드립니다. 선택하지 않았다고 건강에 이상이 없다는 뜻은 아닙니다.')
     for symptom in symptoms:
