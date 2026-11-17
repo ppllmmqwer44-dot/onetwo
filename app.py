@@ -13,7 +13,8 @@ import io
 from PIL import Image, ImageOps
 import json
 import math
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
+from zoneinfo import ZoneInfo
 from uuid import uuid4
 
 import pandas as pd
@@ -42,6 +43,10 @@ def large_choice(label, options, index=0, format_func=str, key=None, **kwargs):
 def visible_checks(label, options, default=None, format_func=str, key=None, **kwargs):
     return st.pills(label, list(options), selection_mode='multi', default=default or [],
                     format_func=format_func, key=key) or []
+
+
+def today_kst():
+    return datetime.now(ZoneInfo('Asia/Seoul')).date()
 
 
 def empty_data():
@@ -86,7 +91,7 @@ def validate_data(raw):
     meal_keys, health_keys, availability_keys = set(), set(), set()
     for r in raw['meals']:
         day = date.fromisoformat(r.get('날짜', ''))
-        check(day <= date.today(), '미래 날짜의 식사 완료 기록은 불가합니다.')
+        check(day <= today_kst(), '미래 날짜의 식사 완료 기록은 불가합니다.')
         people = r.get('참여')
         check(r.get('끼니') in SLOTS and isinstance(people, list) and len(set(people)) >= 2
               and len(people) == len(set(people)) and all(i in ids for i in people), '식사 참여 정보 오류입니다.')
@@ -100,7 +105,7 @@ def validate_data(raw):
         availability_keys.add(key)
     for r in raw['health']:
         day = date.fromisoformat(r.get('날짜', ''))
-        check(day <= date.today() and r.get('구성원') in ids, '건강 날짜 또는 가족 오류입니다.')
+        check(day <= today_kst() and r.get('구성원') in ids, '건강 날짜 또는 가족 오류입니다.')
         check(number(r.get('걸음'), 0, 100000) and number(r.get('수면'), 0, 24), '건강 입력 범위 오류입니다.')
         a, b = r.get('수축기'), r.get('이완기')
         check((a is None and b is None) or
@@ -135,7 +140,7 @@ def validate_data(raw):
         check(q.get('상태') in ['진행 중', '확인 대기', '지급 대기', '지급 완료'], '퀘스트 상태 오류입니다.')
         for field in ['완료일', '지급일']:
             if q.get(field) is not None:
-                check(date.fromisoformat(q[field]) <= date.today(), '완료·지급 날짜 오류입니다.')
+                check(date.fromisoformat(q[field]) <= today_kst(), '완료·지급 날짜 오류입니다.')
         check(q['상태'] not in ['확인 대기', '지급 대기', '지급 완료'] or q.get('완료일') is not None, '완료일이 필요합니다.')
         check(q['상태'] != '지급 완료' or q.get('지급일') is not None, '지급일이 필요합니다.')
     # 알려진 필드만 보관한다.
@@ -182,8 +187,8 @@ def meal_candidates(d):
 
 
 def weekly_meals(d):
-    start = date.today() - timedelta(days=date.today().weekday())
-    return [r for r in d['meals'] if start <= date.fromisoformat(r['날짜']) <= date.today()]
+    start = today_kst() - timedelta(days=today_kst().weekday())
+    return [r for r in d['meals'] if start <= date.fromisoformat(r['날짜']) <= today_kst()]
 
 
 def chart(frame, x, y, title, line=False):
@@ -299,12 +304,12 @@ def transition_quest(q, action, actor):
         if actor != q['담당'] or q['상태'] != '진행 중' or not q.get('사진'):
             raise ValueError('담당자가 완료 사진을 먼저 올려 주세요.')
         q['상태'] = '지급 대기'
-        q['완료일'] = str(date.today())
+        q['완료일'] = str(today_kst())
     elif action == '지급 완료':
         if actor != q['등록자'] or q['상태'] != '지급 대기':
             raise ValueError('미션을 등록한 가족만 지급 완료를 기록할 수 있습니다.')
         q['상태'] = '지급 완료'
-        q['지급일'] = str(date.today())
+        q['지급일'] = str(today_kst())
     else:
         raise ValueError('허용되지 않은 작업입니다.')
 
@@ -520,7 +525,7 @@ def meals(d):
             st.write('가족 두 명 이상이 가능한 끼니를 등록하면 함께 먹기 좋은 시간을 추천해요.')
     with tab2:
         with st.form('meal_add', clear_on_submit=True):
-            day = st.date_input('식사한 날짜', max_value=date.today())
+            day = st.date_input('식사한 날짜', value=today_kst(), max_value=today_kst(), key='meal_date_'+today_kst().isoformat())
             slot = large_choice('함께한 끼니', SLOTS)
             people = visible_checks('참여한 가족', list(n), format_func=n.get)
             if st.form_submit_button('식사 기록 저장'):
@@ -534,10 +539,21 @@ def meals(d):
         records = weekly_meals(d)
         st.metric('이번 주 함께한 식사', f'{len(records)}회', f'목표까지 {max(0, goal-len(records))}회 남음', delta_color='off')
         st.progress(min(1.0, len(records)/goal))
-        start = date.today() - timedelta(days=date.today().weekday())
+        start = today_kst() - timedelta(days=today_kst().weekday())
         frame = pd.DataFrame([{'요일': DAYS[i], '함께한 식사(회)': sum(r['날짜'] == str(start+timedelta(days=i)) for r in records)}
-                              for i in range(date.today().weekday()+1)])
-        chart(frame, '요일', '함께한 식사(회)', '이번 주 요일별 함께한 식사')
+                              for i in range(7)])
+        fig = px.bar(frame, x='요일', y='함께한 식사(회)',
+                     category_orders={'요일': DAYS}, color_discrete_sequence=['#21854B'])
+        fig.update_traces(width=0.38, text=[str(v) if v else '' for v in frame['함께한 식사(회)']],
+                          textposition='outside', cliponaxis=False,
+                          hovertemplate='%{x}요일 · %{y}회<extra></extra>')
+        fig.update_layout(height=280, margin=dict(l=8,r=8,t=25,b=10),
+                          paper_bgcolor='#FFFFFF', plot_bgcolor='#FFFFFF',
+                          font=dict(size=18), showlegend=False,
+                          xaxis=dict(title=None, fixedrange=True),
+                          yaxis=dict(title=None, range=[0,max(3,int(frame['함께한 식사(회)'].max()))+0.6],
+                                     dtick=1, fixedrange=True, gridcolor='#E8EEE9', zeroline=False))
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar':False})
         st.dataframe(frame, hide_index=True)
         for member in d['members']:
             count = sum(member['id'] in r['참여'] for r in records)
@@ -642,7 +658,7 @@ def health(d):
     who = large_choice('건강을 살펴볼 가족', list(n), format_func=n.get)
     member = next(m for m in d['members'] if m['id'] == who)
     with st.form('health_add_'+who, clear_on_submit=True):
-        day = st.date_input('기록 날짜', max_value=date.today())
+        day = st.date_input('기록 날짜', max_value=today_kst())
         steps = st.number_input('하루 걸음 수(보)', 0, 100000, 0, 100)
         sleep = st.number_input('수면 시간(시간)', 0.0, 24.0, 7.0, 0.5)
         if st.form_submit_button('건강 기록 저장', use_container_width=True):
@@ -651,8 +667,8 @@ def health(d):
                                 '걸음': steps, '수면': sleep, '수축기': None, '이완기': None, '메모': ''})
             st.rerun()
     period = large_choice('분석 기간', [7, 14, 30], format_func=lambda x: f'최근 {x}일')
-    start = date.today() - timedelta(days=period-1)
-    records = sorted([r for r in d['health'] if r['구성원'] == who and start <= date.fromisoformat(r['날짜']) <= date.today()], key=lambda r: r['날짜'])
+    start = today_kst() - timedelta(days=period-1)
+    records = sorted([r for r in d['health'] if r['구성원'] == who and start <= date.fromisoformat(r['날짜']) <= today_kst()], key=lambda r: r['날짜'])
     if not records:
         st.write('첫 건강 기록을 남겨 보세요.')
     else:
@@ -673,7 +689,7 @@ def health(d):
             st.write('수면 실천: 설정한 수면 목표보다 평균이 짧습니다. 일정한 취침 시간과 편안한 수면 환경을 함께 준비하세요.')
         else:
             st.write('수면: 설정한 시간 목표 이상입니다. 과도한 졸림이나 수면 불편이 있으면 별도로 상담하세요.')
-        calendar = pd.DataFrame({'날짜': pd.date_range(start, date.today()).strftime('%Y-%m-%d')})
+        calendar = pd.DataFrame({'날짜': pd.date_range(start, today_kst()).strftime('%Y-%m-%d')})
         plotted = calendar.merge(frame, on='날짜', how='left')
         plotted['걸음 목표'] = member['걸음 목표']
         plotted['수면 목표'] = member['수면 목표']
