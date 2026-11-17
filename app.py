@@ -346,6 +346,10 @@ def group_missions(quests):
 
 def quests(d):
     st.header('🎯 집안일 퀘스트')
+    notice = st.session_state.pop('quest_notice', None)
+    if notice:
+        st.success(notice)
+        st.toast(notice, icon='🎉')
     if not require_family(d):
         return
     n = names(d)
@@ -399,7 +403,7 @@ def quests(d):
                 selected = large_choice('사진을 제출하거나 확인할 가족',
                     [q['담당'] for q in group], format_func=n.get, key='submitter_'+first['id'])
                 q = next(item for item in group if item['담당']==selected)
-                st.write('상태: '+{'진행 중':'진행 중', '지급 대기':'미션 완료 · 미션금 받을 예정', '지급 완료':'미션 완료 · 미션금 받음'}.get(q['상태'],q['상태']))
+                st.write('상태: '+{'진행 중':'진행 중', '지급 대기':'미션 성공 · 적립 완료 (현금 지급 대기)', '지급 완료':'미션 완료 · 미션금 받음'}.get(q['상태'],q['상태']))
                 if q.get('사진'):
                     st.image(base64.b64decode(q['사진']), caption=n[selected]+'의 완료 사진', use_container_width=True)
                 if q['상태']=='진행 중':
@@ -412,6 +416,8 @@ def quests(d):
                                 raise ValueError('사진 보관 한도에 도달했습니다.')
                             q['사진'] = encoded
                             transition_quest(q, '사진으로 미션 완료', selected)
+                            total = sum(item['용돈'] for item in d['quests'] if item['담당']==selected and item['상태'] in ('지급 대기','지급 완료'))
+                            st.session_state.quest_notice = f"{n[selected]}님 미션 성공! +{q['용돈']:,}원 적립 🎉 총 {total:,}원을 모았어요."
                             st.rerun()
                         except ValueError as exc:
                             st.error(str(exc))
@@ -423,8 +429,9 @@ def quests(d):
     with tab3:
         frame = pd.DataFrame(quest_summary(d))
         own = next(row for row in quest_summary(d) if row['구성원']==n[actor])
-        st.metric('내가 받을 미션금', f"{own['받을 미션금(원)']:,}원")
-        st.metric('내가 받은 미션금', f"{own['받은 미션금(원)']:,}원")
+        earned = own['받을 미션금(원)'] + own['받은 미션금(원)']
+        st.metric('🏆 미션으로 모은 총 금액', f'{earned:,}원')
+        st.caption(f"현금 수령 {own['받은 미션금(원)']:,}원 · 지급 대기 {own['받을 미션금(원)']:,}원")
         if d['quests']:
             st.subheader('가족별 미션 현황')
             rows = quest_summary(d)
@@ -439,7 +446,7 @@ def quests(d):
                          color_discrete_map={'완료':'#1751D0', '남음':'#D9DFEA'},
                          category_orders={'가족':[r['구성원'] for r in rows], '상태':['완료','남음']})
             fig.update_traces(width=0.30, texttemplate='%{text}', textposition='inside',
-                              insidetextanchor='middle', textfont_size=18,
+                              insidetextanchor='middle', textfont_size=18, textangle=0,
                               hovertemplate='%{y}: %{x}개<extra>%{fullData.name}</extra>')
             # Hide zero-value labels without hiding families with no assigned missions.
             for trace in fig.data:
