@@ -220,52 +220,67 @@ def delete_record(d, key, labeler, widget_key):
             st.rerun()
 
 
+def add_family_member(d, name):
+    name = name.strip()
+    if not name or len(name) > 20:
+        raise ValueError('가족 호칭을 1~20자로 입력해 주세요.')
+    if name in names(d).values():
+        raise ValueError('이미 등록된 가족이에요.')
+    if len(d['members']) >= 8:
+        raise ValueError('가족은 최대 8명까지 등록할 수 있어요.')
+    d['members'].append({'id': uid(), '이름': name, '주간 가능 시간': 180,
+                         '걸음 목표': 6000, '수면 목표': 7.0})
+
+
 def settings(d):
-    st.header('⚙️ 가족 설정')
-    st.caption('실명 대신 별칭 사용을 권장합니다. 가능 시간은 가족이 합의하고, 건강 목표는 필요 시 의료진과 정하세요.')
+    st.header('👨‍👩‍👧‍👦 우리 가족 등록')
+    st.write('파일은 필요 없어요. 가족 호칭 버튼을 누르면 바로 등록됩니다.')
     if d['members']:
-        st.dataframe(pd.DataFrame([{k: v for k, v in m.items() if k != 'id'} for m in d['members']]), hide_index=True)
-    with st.form('member_add', clear_on_submit=True):
-        st.subheader('가족 구성원 추가 · 최대 8명')
-        name = st.text_input('이름 또는 별칭', max_chars=20)
-        capacity = st.number_input('일주일 가사 가능 시간(분)', 0, 10080, 180, 30)
-        steps = st.number_input('개인 하루 걸음 목표(보)', 1, 100000, 6000, 500)
-        sleep = st.number_input('개인 하루 수면 목표(시간)', 1.0, 24.0, 7.0, 0.5)
-        if st.form_submit_button('가족 추가'):
-            if not name.strip() or name.strip() in names(d).values() or len(d['members']) >= 8:
-                st.error('중복되지 않는 이름을 입력해 주세요. 최대 8명까지 등록할 수 있습니다.')
-            else:
-                d['members'].append({'id': uid(), '이름': name.strip(), '주간 가능 시간': capacity,
-                                     '걸음 목표': steps, '수면 목표': sleep})
+        st.subheader('등록된 우리 가족')
+        for member in d['members']:
+            st.success('👤 '+member['이름'])
+    else:
+        st.info('아직 가족이 없어요. 아래에서 우리 가족을 추가해 주세요.')
+    st.subheader('버튼으로 바로 추가')
+    existing = set(names(d).values())
+    for name in ['나', '엄마', '아빠', '첫째 오빠', '둘째 오빠', '언니', '남동생', '여동생']:
+        registered = name in existing
+        if st.button(('✓ '+name+' · 등록됨') if registered else ('＋ '+name),
+                     key='quick_family_'+name, disabled=registered or len(existing)>=8,
+                     use_container_width=True):
+            try:
+                add_family_member(d, name)
                 st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+    st.subheader('원하는 호칭으로 직접 추가')
+    with st.form('custom_family', clear_on_submit=True):
+        name = st.text_input('이름 또는 가족 호칭', max_chars=20, placeholder='예: 할머니, 큰오빠, 막내')
+        if st.form_submit_button('입력한 가족 추가하기', use_container_width=True):
+            try:
+                add_family_member(d, name)
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
     if d['members']:
-        with st.expander('구성원 목표 수정'):
-            target = large_choice('구성원', list(names(d)), format_func=names(d).get, key='edit_member')
-            member = next(m for m in d['members'] if m['id'] == target)
+        st.button('🎯 미션 등록하러 가기', on_click=go_page, args=('집안일 퀘스트',),
+                  key='family_to_quests', use_container_width=True, type='primary')
+        with st.expander('선택 사항 · 건강 목표와 호칭 수정'):
+            st.write('초기 건강 목표는 개인 처방이 아닙니다. 본인의 건강 상태와 의료진 권고에 맞게 바꿔 주세요.')
+            target = large_choice('수정할 가족', list(names(d)), format_func=names(d).get, key='edit_member')
+            member = next(m for m in d['members'] if m['id']==target)
             with st.form('member_edit_'+target):
-                cap = st.number_input('가사 가능 시간(분/주)', 0, 10080, int(member['주간 가능 시간']))
-                goal = st.number_input('걸음 목표(보/일)', 1, 100000, int(member['걸음 목표']))
-                sl = st.number_input('수면 목표(시간/일)', 1.0, 24.0, float(member['수면 목표']))
-                if st.form_submit_button('목표 저장'):
-                    member.update({'주간 가능 시간': cap, '걸음 목표': goal, '수면 목표': sl})
-                    st.rerun()
-        st.caption('기록 참조 손상을 방지하기 위해 구성원 개별 삭제는 지원하지 않습니다. 전체 초기화는 아래에서 할 수 있습니다.')
-    st.divider()
-    st.subheader('데이터 보관')
-    st.warning('데이터는 현재 브라우저 접속 세션에만 보관됩니다. 새로고침·재접속·서버 재시작 시 사라질 수 있습니다. 종료 전에 백업하세요. 가족 간 자동 동기화는 지원하지 않습니다.')
-    st.download_button('가족 데이터 JSON 백업', json.dumps(d, ensure_ascii=False, indent=2),
-                       file_name='우리家밸런스_백업.json', mime='application/json')
-    uploaded = st.file_uploader('백업 불러오기 · 최대 20MB', type=['json'])
-    consent = st.checkbox('현재 데이터를 백업 파일로 교체하는 데 동의합니다.')
-    if st.button('백업 복원', disabled=uploaded is None or not consent):
-        try:
-            if uploaded.size > 20 * 1024 * 1024:
-                raise ValueError('백업은 20MB 이하여야 합니다.')
-            restored = validate_data(json.loads(uploaded.getvalue().decode('utf-8-sig')))
-            st.session_state.data = restored
-            st.rerun()
-        except (ValueError, TypeError, KeyError, OverflowError) as exc:
-            st.error(f'복원하지 못했습니다. 유효한 앱 백업인지 확인하세요. {exc}')
+                new_name = st.text_input('가족 호칭', value=member['이름'], max_chars=20)
+                goal = st.number_input('하루 걸음 목표(보)', 1, 100000, int(member['걸음 목표']), 500)
+                sl = st.number_input('하루 수면 목표(시간)', 1.0, 24.0, float(member['수면 목표']), 0.5)
+                if st.form_submit_button('수정 내용 저장', use_container_width=True):
+                    clean = new_name.strip()
+                    if not clean or any(m['id']!=target and m['이름']==clean for m in d['members']):
+                        st.error('중복되지 않는 가족 호칭을 입력해 주세요.')
+                    else:
+                        member.update({'이름': clean, '걸음 목표': goal, '수면 목표': sl})
+                        st.rerun()
+    st.caption('가족 등록은 현재 접속 중인 화면에만 저장됩니다. 새로고침·재접속 시 사라질 수 있으며 다른 휴대폰과 자동 공유되지 않습니다.')
     with st.expander('전체 기록 초기화'):
         agreed = st.checkbox('사진과 미션금을 포함한 모든 기록 삭제에 동의합니다.', key='reset_consent')
         if st.button('전체 기록 초기화', disabled=not agreed, use_container_width=True):
@@ -382,7 +397,7 @@ def quests(d):
                             encoded = prepare_photo(photo.getvalue())
                             used = sum(len(x.get('사진') or '') for x in d['quests'])
                             if used + len(encoded) > 15 * 1024 * 1024:
-                                raise ValueError('사진 보관 한도에 도달했습니다. 먼저 가족 설정에서 백업해 주세요.')
+                                raise ValueError('사진 보관 한도에 도달했습니다. 이 세션에는 사진을 더 보관할 수 없습니다.')
                             q['사진'] = encoded
                             transition_quest(q, '사진으로 미션 완료', actor)
                             st.rerun()
@@ -668,7 +683,7 @@ def main():
                   type='primary' if st.session_state.main_menu == menu else 'secondary',
                   on_click=go_page, args=(menu,))
     page = st.session_state.main_menu
-    st.write('접속 세션에만 저장됩니다. 가족 설정에서 백업해 주세요.')
+    st.write('현재 접속 중에만 저장됩니다. 새로고침·재접속하면 사라질 수 있습니다.')
     if st.button('로고·시작 화면으로', use_container_width=True):
         st.session_state.started = False
         st.rerun()
