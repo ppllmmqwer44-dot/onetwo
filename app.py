@@ -7,6 +7,9 @@ GitHub Pages는 Python 앱을 실행하지 않습니다. Streamlit Community Clo
 """
 from __future__ import annotations
 
+import base64
+import io
+from PIL import Image, ImageOps
 import json
 import math
 from datetime import date, timedelta
@@ -22,6 +25,22 @@ SLOTS = ['아침', '점심', '저녁']
 MENUS = ['홈', '집안일 퀘스트', '함께 식사', '부모님 건강', '가족 설정']
 
 
+def large_choice(label, options, index=0, format_func=str, key=None, **kwargs):
+    """선택지가 화면에 바로 보이는 큰 선택 카드."""
+    return st.radio(label, list(options), index=index, format_func=format_func, key=key)
+
+
+def visible_checks(label, options, default=None, format_func=str, key=None, **kwargs):
+    st.write('**' + label + '**')
+    chosen = []
+    defaults = set(default or [])
+    for i, option in enumerate(options):
+        if st.checkbox(format_func(option), value=option in defaults,
+                       key=f"checks_{key or label}_{i}"):
+            chosen.append(option)
+    return chosen
+
+
 def empty_data():
     return {'version': 1, 'members': [], 'chores': [], 'meals': [],
             'availability': [], 'health': [], 'meal_goal': 3, 'quests': []}
@@ -29,33 +48,6 @@ def empty_data():
 
 def uid():
     return uuid4().hex
-
-
-def sample_data():
-    d = empty_data()
-    for name, capacity in [('엄마', 180), ('나', 120), ('오빠', 120)]:
-        d['members'].append({'id': uid(), '이름': name, '주간 가능 시간': capacity,
-                             '걸음 목표': 6000, '수면 목표': 7.0})
-    ids = [m['id'] for m in d['members']]
-    for title, minutes, person in [('요리', 210, 0), ('설거지', 105, 0), ('빨래', 60, 0),
-                                    ('청소', 90, 1), ('분리수거', 30, 2)]:
-        d['chores'].append({'id': uid(), '가사': title, '주간 분': minutes,
-                            '담당': ids[person], '가능 담당': ids[:]})
-    today = date.today()
-    for offset in [1, 3]:
-        d['meals'].append({'id': uid(), '날짜': str(today - timedelta(days=offset)),
-                           '끼니': '저녁', '참여': ids[:]})
-    for member in ids:
-        for day in ['수', '토', '일']:
-            d['availability'].append({'구성원': member, '요일': day, '끼니': '저녁'})
-    for i in range(7):
-        d['health'].append({'id': uid(), '구성원': ids[0],
-                            '날짜': str(today - timedelta(days=6-i)),
-                            '걸음': 4200 + 300*i, '수면': 6.0 + i*0.15,
-                            '수축기': None, '이완기': None, '메모': '예시 기록'})
-    for title, person, minutes, reward in [('내 방 청소', 1, 20, 2000), ('분리수거', 2, 15, 1500), ('설거지', 1, 20, 2000), ('거실 청소', 2, 30, 3000)]:
-        d['quests'].append({'id': uid(), '제목': title, '설명': '끝난 뒤 완료 요청을 눌러 주세요.', '담당': ids[person], '등록자': ids[0], '예상 분': minutes, '용돈': reward, '기한': str(today+timedelta(days=3)), '상태': '진행 중', '완료일': None, '지급일': None})
-    return d
 
 
 def validate_data(raw):
@@ -124,8 +116,19 @@ def validate_data(raw):
         quest_ids.add(q['id'])
         check(text(q.get('제목'), 60) and isinstance(q.get('설명'), str) and len(q['설명']) <= 500, '퀘스트 설명 오류입니다.')
         check(q.get('담당') in ids and q.get('등록자') in ids, '퀘스트 가족 오류입니다.')
-        check(number(q.get('예상 분'), 1, 1440) and number(q.get('용돈'), 0, 1000000) and int(q['용돈']) == q['용돈'], '퀘스트 시간 또는 금액 오류입니다.')
-        date.fromisoformat(q.get('기한', ''))
+        check(number(q.get('용돈'), 0, 1000000) and int(q['용돈']) == q['용돈'], '미션금 오류입니다.')
+        q.pop('예상 분', None)
+        q.pop('기한', None)
+        photo = q.get('사진')
+        if photo is not None:
+            check(isinstance(photo, str) and len(photo) <= 1500000, '사진 크기 오류입니다.')
+            try:
+                image_bytes = base64.b64decode(photo, validate=True)
+                with Image.open(io.BytesIO(image_bytes)) as image:
+                    check(image.format == 'JPEG' and max(image.size) <= 1280, '사진 형식 오류입니다.')
+                    image.verify()
+            except Exception as exc:
+                raise ValueError('백업 사진을 확인할 수 없습니다.') from exc
         check(q.get('상태') in ['진행 중', '확인 대기', '지급 대기', '지급 완료'], '퀘스트 상태 오류입니다.')
         for field in ['완료일', '지급일']:
             if q.get(field) is not None:
@@ -199,7 +202,7 @@ def names(d):
 
 def require_family(d):
     if not d['members']:
-        st.info('먼저 ‘가족 설정’에서 가족을 등록해 주세요. 예시 데이터로 둘러볼 수도 있습니다.')
+        st.info('먼저 ‘가족 설정’에서 엄마, 나, 오빠 등 실제 사용할 가족을 등록해 주세요.')
         return False
     return True
 
@@ -208,7 +211,7 @@ def delete_record(d, key, labeler, widget_key):
     if not d[key]:
         return
     with st.expander('기록 삭제'):
-        index = st.selectbox('삭제할 기록', range(len(d[key])),
+        index = large_choice('삭제할 기록', range(len(d[key])),
                              format_func=lambda i: labeler(d[key][i]), key=widget_key)
         confirm = st.checkbox('선택한 기록을 삭제하겠습니다.', key=widget_key+'_confirm')
         if st.button('선택 기록 삭제', key=widget_key+'_button', disabled=not confirm):
@@ -236,7 +239,7 @@ def settings(d):
                 st.rerun()
     if d['members']:
         with st.expander('구성원 목표 수정'):
-            target = st.selectbox('구성원', list(names(d)), format_func=names(d).get, key='edit_member')
+            target = large_choice('구성원', list(names(d)), format_func=names(d).get, key='edit_member')
             member = next(m for m in d['members'] if m['id'] == target)
             with st.form('member_edit_'+target):
                 cap = st.number_input('가사 가능 시간(분/주)', 0, 10080, int(member['주간 가능 시간']))
@@ -251,78 +254,75 @@ def settings(d):
     st.warning('데이터는 현재 브라우저 접속 세션에만 보관됩니다. 새로고침·재접속·서버 재시작 시 사라질 수 있습니다. 종료 전에 백업하세요. 가족 간 자동 동기화는 지원하지 않습니다.')
     st.download_button('가족 데이터 JSON 백업', json.dumps(d, ensure_ascii=False, indent=2),
                        file_name='우리家밸런스_백업.json', mime='application/json')
-    uploaded = st.file_uploader('백업 불러오기 · 최대 2MB', type=['json'])
+    uploaded = st.file_uploader('백업 불러오기 · 최대 20MB', type=['json'])
     consent = st.checkbox('현재 데이터를 백업 파일로 교체하는 데 동의합니다.')
     if st.button('백업 복원', disabled=uploaded is None or not consent):
         try:
-            if uploaded.size > 2 * 1024 * 1024:
-                raise ValueError('백업은 2MB 이하여야 합니다.')
+            if uploaded.size > 20 * 1024 * 1024:
+                raise ValueError('백업은 20MB 이하여야 합니다.')
             restored = validate_data(json.loads(uploaded.getvalue().decode('utf-8-sig')))
             st.session_state.data = restored
-            st.session_state.example = False
             st.rerun()
         except (ValueError, TypeError, KeyError, OverflowError) as exc:
             st.error(f'복원하지 못했습니다. 유효한 앱 백업인지 확인하세요. {exc}')
-    with st.expander('예시 데이터 / 전체 초기화'):
-        st.caption('예시는 실제 가족 기록이 아닙니다. 현재 데이터가 교체됩니다.')
-        agreed = st.checkbox('현재 데이터를 교체하는 데 동의합니다.', key='reset_consent')
-        left, right = st.columns(2)
-        if left.button('예시 데이터로 교체', disabled=not agreed):
-            st.session_state.data = sample_data()
-            st.session_state.example = True
-            st.rerun()
-        if right.button('전체 기록 초기화', disabled=not agreed):
+    with st.expander('전체 기록 초기화'):
+        agreed = st.checkbox('사진과 미션금을 포함한 모든 기록 삭제에 동의합니다.', key='reset_consent')
+        if st.button('전체 기록 초기화', disabled=not agreed, use_container_width=True):
             st.session_state.data = empty_data()
-            st.session_state.example = False
             st.rerun()
+
+
+def prepare_photo(raw):
+    if len(raw) > 10 * 1024 * 1024:
+        raise ValueError('사진은 10MB 이하로 올려 주세요.')
+    try:
+        with Image.open(io.BytesIO(raw)) as source:
+            if source.format not in ['JPEG', 'PNG', 'WEBP'] or source.width * source.height > 25000000:
+                raise ValueError('JPG, PNG, WEBP 사진을 사용해 주세요. 최대 2,500만 화소입니다.')
+            image = ImageOps.exif_transpose(source).convert('RGB')
+            image.thumbnail((1280, 1280))
+            output = io.BytesIO()
+            image.save(output, format='JPEG', quality=78, optimize=True)
+            return base64.b64encode(output.getvalue()).decode('ascii')
+    except (OSError, Image.DecompressionBombError) as exc:
+        raise ValueError('사진을 열 수 없습니다. 다른 JPG·PNG 사진을 선택해 주세요.') from exc
 
 
 def transition_quest(q, action, actor):
-    rules = {'완료 요청': ('진행 중', '확인 대기', q['담당']),
-             '완료 승인': ('확인 대기', '지급 대기', q['등록자']),
-             '다시 요청': ('확인 대기', '진행 중', q['등록자']),
-             '지급 완료': ('지급 대기', '지급 완료', q['등록자'])}
-    if action not in rules:
-        raise ValueError('허용되지 않은 작업입니다.')
-    before, after, allowed = rules[action]
-    if actor != allowed or q['상태'] != before:
-        raise ValueError('담당자 또는 현재 상태가 맞지 않습니다.')
-    q['상태'] = after
-    if action == '완료 요청':
+    if action == '사진으로 미션 완료':
+        if actor != q['담당'] or q['상태'] != '진행 중' or not q.get('사진'):
+            raise ValueError('담당자가 완료 사진을 먼저 올려 주세요.')
+        q['상태'] = '지급 대기'
         q['완료일'] = str(date.today())
-    if action == '다시 요청':
-        q['완료일'] = None
-    if action == '지급 완료':
+    elif action == '지급 완료':
+        if actor != q['등록자'] or q['상태'] != '지급 대기':
+            raise ValueError('등록한 보호자만 지급 완료를 기록할 수 있습니다.')
+        q['상태'] = '지급 완료'
         q['지급일'] = str(date.today())
+    else:
+        raise ValueError('허용되지 않은 작업입니다.')
 
 
 def quest_summary(d):
-    rows = []
-    for m in d['members']:
-        assigned = [q for q in d['quests'] if q['담당'] == m['id']]
-        rows.append({'구성원': m['이름'],
-                     '배정 시간(분)': sum(q['예상 분'] for q in assigned),
-                     '승인된 완료 시간(분)': sum(q['예상 분'] for q in assigned if q['상태'] in ['지급 대기', '지급 완료']),
-                     '지급 대기(원)': sum(q['용돈'] for q in assigned if q['상태'] == '지급 대기'),
-                     '지급 완료(원)': sum(q['용돈'] for q in assigned if q['상태'] == '지급 완료')})
-    return rows
+    return [{'구성원': m['이름'],
+             '배정 미션(개)': sum(q['담당']==m['id'] for q in d['quests']),
+             '완료 미션(개)': sum(q['담당']==m['id'] and q['상태'] in ['지급 대기','지급 완료'] for q in d['quests']),
+             '받을 미션금(원)': sum(q['용돈'] for q in d['quests'] if q['담당']==m['id'] and q['상태']=='지급 대기'),
+             '받은 미션금(원)': sum(q['용돈'] for q in d['quests'] if q['담당']==m['id'] and q['상태']=='지급 완료')}
+            for m in d['members']]
 
 
 def home(d):
     st.header('🏡 우리 가족, 오늘도 균형 있게')
     st.write('집안일은 퀘스트로, 식사는 함께, 건강은 꾸준하게!')
     st.metric('진행 중인 집안일', f"{sum(q['상태']=='진행 중' for q in d['quests'])}개")
-    st.metric('확인이 필요한 퀘스트', f"{sum(q['상태']=='확인 대기' for q in d['quests'])}개")
+    st.metric('완료한 미션', f"{sum(q['상태'] in ['지급 대기', '지급 완료'] for q in d['quests'])}개")
     st.metric('승인 후 지급할 용돈', f"{sum(q['용돈'] for q in d['quests'] if q['상태']=='지급 대기'):,}원")
     st.metric('이번 주 함께한 식사', f"{len(weekly_meals(d))} / {d['meal_goal']}회")
     if not require_family(d):
         return
     st.subheader('오늘의 실천 제안')
-    overdue = [q for q in d['quests'] if q['상태']=='진행 중' and q['기한'] < str(date.today())]
-    if overdue:
-        st.warning(f'기한이 지난 퀘스트 {len(overdue)}개가 있어요. 혼내기보다 양과 시간을 함께 조정해 보세요.')
-    else:
-        st.info('집안일 퀘스트에서 할 일을 확인하고, 끝나면 완료 요청을 눌러 주세요.')
+    st.info('집안일 퀘스트에서 미션을 고르고, 완료 사진을 올려 미션금을 모아 보세요. 시간 제한은 없어요.')
     candidates = meal_candidates(d)
     if candidates:
         best = candidates[0]
@@ -337,74 +337,78 @@ def quests(d):
     if not require_family(d):
         return
     n = names(d)
-    st.info('완료 요청 → 등록한 보호자 승인 → 실제 용돈 지급 → 지급 완료 기록. 앱이 돈을 송금하지는 않습니다.')
-    st.warning('현재 사용자 선택은 가족끼리 쓰는 시연용입니다. 로그인·비밀번호 인증이 아니므로 다른 사람의 역할 선택을 기술적으로 막지는 않습니다.')
-    actor = st.selectbox('지금 사용하는 가족', list(n), format_func=n.get, key='quest_actor')
-    tab1, tab2, tab3 = st.tabs(['퀘스트 목록', '퀘스트 만들기', '분담·용돈 분석'])
+    st.write('할 일을 끝내고 사진을 올리면 미션 완료! 정해진 시간이나 마감일은 없어요.')
+    st.info('미션금은 앱 안의 지급 예정 기록입니다. 실제 송금은 하지 않습니다. 사진 내용은 자동 판정하지 않습니다.')
+    st.caption('사용자 선택은 로그인 인증이 아닙니다. 현재 접속 세션만 저장되며 가족 휴대폰 간 자동 공유되지 않습니다.')
+    actor = large_choice('누가 사용하나요?', list(n), format_func=n.get, key='quest_actor')
+    tab1, tab2, tab3 = st.tabs(['내 미션', '미션 등록', '미션금·가족 분담'])
     with tab2:
-        st.write('엄마 등 보호자가 자기 이름으로 퀘스트를 등록하세요. 여러 명을 선택하면 각자에게 별도의 퀘스트가 생깁니다.')
+        st.subheader('엄마가 직접 미션을 만들어 주세요')
         with st.form('new_quest', clear_on_submit=True):
-            title = st.text_input('할 일', max_chars=60, placeholder='예: 방 청소, 설거지, 분리수거')
-            detail = st.text_area('어떻게 하면 완료인가요?', max_chars=500, placeholder='예: 책상 정리하고 바닥까지 청소하기')
-            people = st.multiselect('누가 할까요?', list(n), format_func=n.get)
-            minutes = st.number_input('한 사람당 예상 시간(분)', 1, 1440, 20)
-            reward = st.number_input('한 사람당 용돈(원)', 0, 1000000, 2000, 100)
-            deadline = st.date_input('완료 기한', min_value=date.today())
-            consent = st.checkbox('보호자로서 안전과 용돈을 가족과 합의했습니다.')
-            if st.form_submit_button('퀘스트 등록', use_container_width=True):
+            title = st.text_input('어떤 집안일인가요?', max_chars=60, placeholder='예: 설거지하기')
+            detail = st.text_area('완료 기준', max_chars=500, placeholder='예: 그릇을 씻고 싱크대까지 정리하기')
+            people = visible_checks('누가 할까요?', list(n), format_func=n.get)
+            reward = st.number_input('한 사람에게 줄 미션금(원)', 0, 1000000, 2000, 100)
+            consent = st.checkbox('보호자로서 안전과 미션금을 가족과 합의했습니다.')
+            if st.form_submit_button('미션 등록하기', use_container_width=True):
                 if not title.strip() or not people or not consent:
-                    st.error('할 일, 담당자, 합의 확인을 모두 입력해 주세요.')
+                    st.error('할 일과 담당자를 입력하고 합의를 확인해 주세요.')
                 else:
                     for person in people:
                         d['quests'].append({'id': uid(), '제목': title.strip(), '설명': detail,
-                                            '담당': person, '등록자': actor, '예상 분': minutes,
-                                            '용돈': reward, '기한': str(deadline), '상태': '진행 중',
-                                            '완료일': None, '지급일': None})
+                                            '담당': person, '등록자': actor, '용돈': reward,
+                                            '상태': '진행 중', '사진': None, '완료일': None, '지급일': None})
                     st.rerun()
     with tab1:
-        scope = st.selectbox('보고 싶은 퀘스트', ['나와 관련된 퀘스트', '가족 전체 퀘스트'])
-        status = st.selectbox('진행 상태', ['전체', '진행 중', '확인 대기', '지급 대기', '지급 완료'])
-        visible = [q for q in d['quests'] if (scope=='가족 전체 퀘스트' or actor in [q['담당'], q['등록자']]) and (status=='전체' or q['상태']==status)]
+        visible = [q for q in d['quests'] if actor in [q['담당'], q['등록자']]]
         if not visible:
-            st.info('해당 퀘스트가 없습니다. 퀘스트 만들기에서 할 일을 등록하세요.')
-        for q in sorted(visible, key=lambda x: x['기한']):
+            st.info('아직 미션이 없어요. 미션 등록을 눌러 우리 가족의 첫 미션을 만들어 주세요.')
+        for q in reversed(visible):
             with st.container(border=True):
                 st.subheader(q['제목'])
                 st.write(f"담당: {n[q['담당']]} · 등록: {n[q['등록자']]}")
-                st.write(f"💰 {q['용돈']:,}원 · ⏱ {q['예상 분']}분")
-                st.write(f"기한: {q['기한']} · 상태: **{q['상태']}**")
+                st.write(f"💰 미션금 {q['용돈']:,}원")
+                st.write('진행 중' if q['상태']=='진행 중' else '🏆 미션 완료 · '+('미션금 받을 예정' if q['상태']=='지급 대기' else '미션금 받음'))
                 if q['설명']:
                     st.write(q['설명'])
-                actions = []
+                if q.get('사진'):
+                    st.image(base64.b64decode(q['사진']), caption='제출한 완료 사진', use_container_width=True)
                 if q['상태']=='진행 중' and actor==q['담당']:
-                    actions = ['완료 요청']
-                if actor==q['등록자'] and q['상태']=='확인 대기':
-                    actions = ['완료 승인', '다시 요청']
+                    photo = st.file_uploader('완료 사진 올리기', type=['jpg','jpeg','png','webp'], key='photo_'+q['id'])
+                    st.caption('휴대폰의 카메라 또는 사진 보관함에서 선택하세요. 사진에는 얼굴·주소 등 개인정보를 담지 마세요. 원본 최대 10MB이며 저장 시 축소됩니다.')
+                    if st.button('📷 사진 제출하고 미션 완료!', key='finish_'+q['id'], disabled=photo is None, use_container_width=True):
+                        try:
+                            encoded = prepare_photo(photo.getvalue())
+                            used = sum(len(x.get('사진') or '') for x in d['quests'])
+                            if used + len(encoded) > 15 * 1024 * 1024:
+                                raise ValueError('사진 보관 한도에 도달했습니다. 먼저 가족 설정에서 백업해 주세요.')
+                            q['사진'] = encoded
+                            transition_quest(q, '사진으로 미션 완료', actor)
+                            st.rerun()
+                        except ValueError as exc:
+                            st.error(str(exc))
                 if actor==q['등록자'] and q['상태']=='지급 대기':
-                    paid = st.checkbox('실제로 용돈을 지급했습니다.', key='paid_'+q['id'])
-                    if paid:
-                        actions = ['지급 완료']
-                for action in actions:
-                    if st.button(action, key=action+q['id'], use_container_width=True):
-                        transition_quest(q, action, actor)
+                    paid = st.checkbox('실제로 미션금을 주었습니다.', key='paid_'+q['id'])
+                    if st.button('미션금 지급 완료', key='pay_'+q['id'], disabled=not paid, use_container_width=True):
+                        transition_quest(q, '지급 완료', actor)
                         st.rerun()
     with tab3:
-        st.write('현재 등록된 전체 퀘스트 기준입니다. 예상 시간은 실제 완료 시간이 아닙니다.')
-        if not d['quests']:
-            st.info('퀘스트를 등록하면 가족별 분담과 용돈을 분석합니다.')
-        else:
-            frame = pd.DataFrame(quest_summary(d))
-            chart(frame, '구성원', ['배정 시간(분)', '승인된 완료 시간(분)'], '가족별 퀘스트 분담 시간(분)')
+        frame = pd.DataFrame(quest_summary(d))
+        own = next(row for row in quest_summary(d) if row['구성원']==n[actor])
+        st.metric('내가 받을 미션금', f"{own['받을 미션금(원)']:,}원")
+        st.metric('내가 받은 미션금', f"{own['받은 미션금(원)']:,}원")
+        if d['quests']:
+            chart(frame, '구성원', ['배정 미션(개)', '완료 미션(개)'], '가족별 미션 수')
             st.dataframe(frame, hide_index=True)
-            total = sum(q['예상 분'] for q in d['quests'])
-            cap = sum(m['주간 가능 시간'] for m in d['members'])
-            if cap:
-                comparisons = [(m, frame.iloc[i]['배정 시간(분)']-total*m['주간 가능 시간']/cap) for i,m in enumerate(d['members'])]
-                heavy, extra = max(comparisons, key=lambda x:x[1])
-                if extra > 0:
-                    st.info(f"가능 시간 비례 기준보다 {heavy['이름']}에게 약 {extra:.0f}분 더 배정되어 있어요. 새 퀘스트는 여유 있는 가족에게 맡기거나 일을 작게 나눠 보세요.")
-                st.write('가족 설정의 주간 가능 시간 비율을 참고합니다. 퀘스트 전체 기간과 주간 가능 시간은 기간이 다를 수 있으므로 분담 비율만 비교하며 공정성의 절대 기준은 아닙니다.')
-            st.write('해결 방법: 비슷한 난이도에는 비슷한 보상을 정하고, 위험하거나 무거운 일은 아이에게 맡기지 마세요. 용돈 없는 공동 책임도 가족끼리 합의하세요.')
+            active = [row for row in quest_summary(d) if row['배정 미션(개)']]
+            if len(active)>1:
+                most = max(active, key=lambda row:row['배정 미션(개)'])
+                least = min(active, key=lambda row:row['배정 미션(개)'])
+                if most['배정 미션(개)']-least['배정 미션(개)']>=2:
+                    st.info(f"{most['구성원']}에게 미션이 더 많이 배정되어 있어요. 다음 미션은 {least['구성원']}에게 부탁해 보세요.")
+            st.write('미션 수만으로 공정성을 단정할 수 없어요. 난이도와 가족 상황을 함께 고려하고, 비슷한 일에는 비슷한 미션금을 정해 주세요.')
+        else:
+            st.info('미션을 등록하면 분담과 미션금 분석이 나타나요.')
 
 
 def meals(d):
@@ -417,10 +421,10 @@ def meals(d):
     st.caption('가족 2명 이상이 함께한 끼니를 1회로 계산합니다. 같은 날짜·끼니는 중복 계산하지 않습니다.')
     tab1, tab2 = st.tabs(['가능 시간 찾기', '식사 기록·분석'])
     with tab1:
-        who = st.selectbox('가능 시간을 등록할 가족', list(n), format_func=n.get)
+        who = large_choice('가능 시간을 등록할 가족', list(n), format_func=n.get)
         existing = [f"{r['요일']}요일 {r['끼니']}" for r in d['availability'] if r['구성원'] == who]
         with st.form('availability_'+who):
-            slots = st.multiselect('매주 함께 식사 가능한 시간', [f'{day}요일 {slot}' for day in DAYS for slot in SLOTS], default=existing)
+            slots = visible_checks('매주 함께 식사 가능한 시간', [f'{day}요일 {slot}' for day in DAYS for slot in SLOTS], default=existing)
             if st.form_submit_button('가능 시간 저장'):
                 d['availability'] = [r for r in d['availability'] if r['구성원'] != who]
                 for value in slots:
@@ -438,8 +442,8 @@ def meals(d):
     with tab2:
         with st.form('meal_add', clear_on_submit=True):
             day = st.date_input('식사한 날짜', max_value=date.today())
-            slot = st.selectbox('함께한 끼니', SLOTS)
-            people = st.multiselect('참여한 가족', list(n), format_func=n.get)
+            slot = large_choice('함께한 끼니', SLOTS)
+            people = visible_checks('참여한 가족', list(n), format_func=n.get)
             if st.form_submit_button('식사 기록 저장'):
                 if len(people) < 2:
                     st.error('가족 2명 이상을 선택해 주세요.')
@@ -478,7 +482,7 @@ def health(d):
     st.header('💚 부모님 건강')
     st.warning('생활 습관 참고용이며 진단·치료·복약 지시를 제공하지 않습니다. 개인 목표는 연령·건강 상태에 맞춰 의료진과 정하세요. 흉통, 호흡곤란, 갑작스러운 마비·언어 장애 등 급성 증상은 수치와 관계없이 119 또는 응급실 도움을 받으세요.')
     st.subheader('지금 병원 도움이 필요한가요?')
-    symptoms = st.multiselect('현재 해당되는 상황을 선택하세요',
+    symptoms = visible_checks('현재 해당되는 상황을 선택하세요',
         ['흉통 또는 심한 호흡곤란', '갑작스러운 마비 또는 언어 장애', '의식 저하 또는 실신',
          '반복되는 어지럼·두통 또는 일상생활 불편', '혈압이 반복해서 평소와 크게 다름',
          '수면·피로 문제가 계속됨'], key='symptom_check')
@@ -493,7 +497,7 @@ def health(d):
     if not require_family(d):
         return
     n = names(d)
-    who = st.selectbox('건강을 살펴볼 가족', list(n), format_func=n.get)
+    who = large_choice('건강을 살펴볼 가족', list(n), format_func=n.get)
     member = next(m for m in d['members'] if m['id'] == who)
     st.caption('당사자의 동의를 받고 기록하세요. 0은 실제 0으로 분석되므로 측정한 항목만 확인해 입력하세요. 혈압은 선택 사항입니다.')
     with st.form('health_add_'+who, clear_on_submit=True):
@@ -517,7 +521,7 @@ def health(d):
                                     '수면': sleep, '수축기': systolic if bp else None,
                                     '이완기': diastolic if bp else None, '메모': memo})
                 st.rerun()
-    period = st.selectbox('분석 기간', [7, 14, 30], format_func=lambda x: f'최근 {x}일')
+    period = large_choice('분석 기간', [7, 14, 30], format_func=lambda x: f'최근 {x}일')
     start = date.today() - timedelta(days=period-1)
     records = sorted([r for r in d['health'] if r['구성원'] == who and start <= date.fromisoformat(r['날짜']) <= date.today()], key=lambda r: r['날짜'])
     if not records:
@@ -564,43 +568,59 @@ def main():
     st.markdown('''<style>
     .stApp {font-family: 'Apple SD Gothic Neo','Malgun Gothic',sans-serif;}
     .block-container {max-width:850px;padding-top:1.2rem;padding-bottom:3rem;}
-    .stApp p, .stApp label, .stApp li, .stApp input, .stApp textarea, .stApp [data-testid="stCaptionContainer"] p {font-size:18px !important;line-height:1.65;}
-    .stApp button, .stApp [data-baseweb="select"] {min-height:52px;}
-    .stApp button p {font-size:18px !important;}
-    [role="tab"] {min-height:56px;padding:12px;}
+    .stApp p, .stApp label, .stApp li, .stApp input, .stApp textarea, .stApp [data-testid="stCaptionContainer"] p {font-size:22px !important;line-height:1.65;}
+    .stApp button, .stApp [data-baseweb="select"] {min-height:64px;}
+    .stApp button p {font-size:22px !important;}
+    [role="tab"] {min-height:64px;padding:12px;}
     [data-testid="stVerticalBlockBorderWrapper"] {border-radius:18px;}
     div[data-testid="stMetric"] {background:#FDFDFF;border:1px solid #E2E6F0;border-radius:16px;padding:18px;color:#1E2433;}
     .brand {padding:42px 28px;border-radius:24px;background:#E8EEFB;color:#1E2433;text-align:center;margin:20px 0;}
     .brand h1 {font-size:clamp(2rem,6vw,3.6rem);color:#1E2433;}
     .brand p {font-size:1.15rem;}
-    button {min-height:52px;}
+    button {min-height:64px;}
+    [data-testid="stRadio"] [role="radiogroup"] {gap:10px;}
+    [data-testid="stRadio"] [role="radiogroup"] > label {
+        width:100%; min-height:64px; padding:14px 16px;
+        border:2px solid #CDD5E4; border-radius:16px; box-sizing:border-box;
+        cursor:pointer; align-items:center;
+    }
+    [data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
+        border-color:#1751D0;background:#E8EEFB;
+    }
+    [data-testid="stCheckbox"] > label {min-height:64px; padding:10px 8px; align-items:center;}
+    [data-testid="stCheckbox"] input {min-width:28px; min-height:28px;}
+    .stApp input, .stApp textarea {font-size:22px !important; min-height:56px;}
+    .stApp h1 {font-size:36px !important;}
+    .stApp h2 {font-size:30px !important;}
+    .stApp h3 {font-size:26px !important;}
+    [data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-primary"],
+    [data-testid="stFormSubmitButton"] button {width:100%;white-space:normal;}
+    [role="tablist"] {flex-wrap:wrap;gap:8px;height:auto !important;}
+    [role="tab"] {border:2px solid #CDD5E4;border-radius:14px;flex:1 1 100%;white-space:normal;}
+    [role="tab"][aria-selected="true"] {background:#E8EEFB;border-color:#1751D0;}
+    @media(max-width:640px) {
+        .block-container {padding-left:16px;padding-right:16px;}
+        [data-testid="stHorizontalBlock"] {flex-direction:column;}
+        [data-testid="stColumn"] {width:100% !important;flex:1 1 100% !important;min-width:100% !important;}
+    }
     </style>''', unsafe_allow_html=True)
     if 'data' not in st.session_state:
         st.session_state.data = empty_data()
-        st.session_state.example = False
     if not st.session_state.get('started', False):
-        st.markdown('<div class="brand"><div style="font-size:64px">🏡</div><h1>우리家 밸런스</h1><p>집안일은 공평하게 · 식사는 함께 · 건강은 꾸준하게</p></div>', unsafe_allow_html=True)
-        st.write('가족이 입력한 생활 데이터를 분석해, 오늘 실천할 수 있는 변화를 제안합니다.')
-        a, b = st.columns(2)
-        if a.button('우리 가족 시작하기', use_container_width=True, type='primary'):
+        st.markdown('<div class="brand"><div style="font-size:80px" aria-hidden="true">🏡</div><h1>우리家 밸런스</h1><p>함께 나누면, 우리 가족이 더 행복해져요.</p></div>', unsafe_allow_html=True)
+        st.write('집안일 퀘스트로 부담을 나누고, 함께 밥 먹고, 부모님 건강도 챙겨요.')
+        if st.button('시작하기 →', use_container_width=True, type='primary'):
             st.session_state.started = True
+            st.session_state.main_menu = '홈'
             st.rerun()
-        if b.button('예시 가족으로 둘러보기', use_container_width=True):
-            st.session_state.data = sample_data()
-            st.session_state.example = True
-            st.session_state.started = True
-            st.rerun()
-        st.caption('외부 API 키 불필요 · 접속 세션 보관 · JSON 백업/복원 · 의료 진단 기능 없음')
         return
     st.title('🏡 우리家 밸런스')
-    page = st.selectbox('메뉴를 선택하세요', MENUS)
+    page = large_choice('하고 싶은 일을 눌러 주세요', MENUS, key='main_menu')
     st.write('접속 세션에만 저장됩니다. 가족 설정에서 백업해 주세요.')
     if st.button('로고·시작 화면으로', use_container_width=True):
         st.session_state.started = False
         st.rerun()
     d = st.session_state.data
-    if st.session_state.get('example', False):
-        st.warning('예시 가족 데이터입니다. 실제 사용 전 ‘가족 설정’에서 전체 초기화해 주세요.')
     {'홈': home, '집안일 퀘스트': quests, '함께 식사': meals,
      '부모님 건강': health, '가족 설정': settings}[page](d)
     st.divider()
