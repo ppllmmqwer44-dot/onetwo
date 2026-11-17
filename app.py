@@ -19,7 +19,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-COLORS = ['#1751D0', '#E2661E', '#0E9E8F', '#C08A00', '#D95D8F', '#2E7D32', '#9117D0', '#C1232C']
+COLORS = ['#21854B', '#E2661E', '#0E9E8F', '#C08A00', '#D95D8F', '#2E7D32', '#9117D0', '#C1232C']
 DAYS = ['월', '화', '수', '목', '금', '토', '일']
 SLOTS = ['아침', '점심', '저녁']
 MENUS = ['홈', '집안일 퀘스트', '함께 식사', '부모님 건강', '가족 설정']
@@ -360,8 +360,8 @@ def quests(d):
         st.subheader('가족 누구나 미션을 등록할 수 있어요')
         st.write('현재 선택한 가족 이름으로 등록됩니다. 여러 담당자를 골라도 미션 카드는 하나로 보여요. 사진 제출과 미션금은 각자 따로 기록해요.')
         with st.form('new_quest', clear_on_submit=True):
-            title = st.text_input('어떤 집안일인가요?', max_chars=60, placeholder='예: 설거지하기')
-            detail = st.text_input('완료 기준 (선택)', max_chars=500, placeholder='예: 싱크대 정리까지')
+            title = st.text_input('어떤 미션인가요?', max_chars=60, placeholder='예: 설거지하기')
+            detail = ''
             people = visible_checks('누가 할까요?', list(n), format_func=n.get)
             reward = st.number_input('한 사람에게 줄 미션금(원)', 0, 1000000, 2000, 100)
             consent = st.checkbox('안전과 미션금을 가족과 합의했습니다.')
@@ -393,9 +393,9 @@ def quests(d):
                 else:
                     st.write('미션금: '+ ' / '.join(n[q['담당']]+f" {q['용돈']:,}원" for q in group))
                 st.divider()
-                st.write('**완료 기준**')
-                st.write(first['설명'] or '등록한 가족과 완료 기준을 이야기해 주세요.')
-                st.divider()
+                if first['설명']:
+                    st.write(first['설명'])
+                    st.divider()
                 completed = [n[q['담당']] for q in group if q['상태'] != '진행 중']
                 st.write('완료한 가족: '+(' · '.join(completed) if completed else '아직 없어요'))
                 st.divider()
@@ -443,7 +443,7 @@ def quests(d):
                              {'가족':row['구성원'], '상태':'남음', '미션 수':left}])
             fig = px.bar(pd.DataFrame(bars), x='미션 수', y='가족', color='상태',
                          orientation='h', barmode='stack', text='미션 수',
-                         color_discrete_map={'완료':'#1751D0', '남음':'#D9DFEA'},
+                         color_discrete_map={'완료':'#21854B', '남음':'#D9DFEA'},
                          category_orders={'가족':[r['구성원'] for r in rows], '상태':['완료','남음']})
             fig.update_traces(width=0.30, texttemplate='%{text}', textposition='inside',
                               insidetextanchor='middle', textfont_size=18, textangle=0,
@@ -690,7 +690,7 @@ def main():
     [role="tab"] {min-height:64px;padding:12px;}
     [data-testid="stVerticalBlockBorderWrapper"] {border-radius:18px;}
     div[data-testid="stMetric"] {background:#FDFDFF;border:1px solid #E2E6F0;border-radius:16px;padding:18px;color:#1E2433;}
-    .brand {padding:42px 28px;border-radius:24px;background:#E8EEFB;color:#1E2433;text-align:center;margin:20px 0;}
+    .brand {padding:42px 28px;border-radius:24px;background:#FFFFFF;color:#1E2433;text-align:center;margin:20px 0;}
     .brand h1 {font-size:clamp(2rem,6vw,3.6rem);color:#1E2433;}
     .brand p {font-size:1.15rem;}
     button {min-height:64px;}
@@ -701,7 +701,7 @@ def main():
         cursor:pointer; align-items:center;
     }
     [data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
-        border-color:#1751D0;background:#E8EEFB;
+        border-color:#21854B;background:#FFFFFF;
     }
     [data-testid="stCheckbox"] > label {min-height:64px; padding:10px 8px; align-items:center;}
     [data-testid="stCheckbox"] input {min-width:28px; min-height:28px;}
@@ -714,12 +714,32 @@ def main():
     [data-testid="stPills"] button {min-height:64px; font-size:22px !important; padding:14px 18px; margin:4px; border-width:2px;}
     [role="tablist"] {flex-wrap:wrap;gap:8px;height:auto !important;}
     [role="tab"] {border:2px solid #CDD5E4;border-radius:14px;flex:1 1 100%;white-space:normal;}
-    [role="tab"][aria-selected="true"] {background:#E8EEFB;border-color:#1751D0;}
+    [role="tab"][aria-selected="true"] {background:#FFFFFF;border-color:#21854B;}
     @media(max-width:640px) {
         .block-container {padding-left:16px;padding-right:16px;}
         [data-testid="stHorizontalBlock"] {flex-direction:column;}
         [data-testid="stColumn"] {width:100% !important;flex:1 1 100% !important;min-width:100% !important;}
     }
+
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {background:#FFFFFF !important;}
+    .stButton > button, .stFormSubmitButton > button,
+    [data-testid="stBaseButton-pills"], [data-testid="stBaseButton-pillsActive"],
+    [data-testid="stFileUploaderDropzone"] button {
+        background:#21854B !important;color:#FFFFFF !important;
+        border:2px solid #21854B !important;border-radius:14px !important;
+        box-shadow:none !important;
+    }
+    .stButton > button p, .stFormSubmitButton > button p,
+    [data-testid="stBaseButton-pills"] p, [data-testid="stBaseButton-pillsActive"] p {
+        color:#FFFFFF !important;
+    }
+    button[aria-pressed="true"] {outline:3px solid #164F2F !important;outline-offset:2px;}
+    .stButton > button:hover, .stFormSubmitButton > button:hover {background:#196B3B !important;}
+    button:disabled {opacity:0.45 !important;}
+    input:focus, textarea:focus {border-color:#21854B !important;box-shadow:0 0 0 1px #21854B !important;}
+    [role="tab"][aria-selected="true"] {color:#21854B !important;border-color:#21854B !important;}
+    [data-testid="stTabs"] [data-baseweb="tab-highlight"] {background:#21854B !important;}
+    .brand {background:#FFFFFF !important;border:1px solid #DDDDDD;}
     </style>''', unsafe_allow_html=True)
     if 'data' not in st.session_state:
         st.session_state.data = empty_data()
