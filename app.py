@@ -25,20 +25,20 @@ SLOTS = ['아침', '점심', '저녁']
 MENUS = ['홈', '집안일 퀘스트', '함께 식사', '부모님 건강', '가족 설정']
 
 
+def go_page(page):
+    st.session_state.main_menu = page
+
+
 def large_choice(label, options, index=0, format_func=str, key=None, **kwargs):
-    """선택지가 화면에 바로 보이는 큰 선택 카드."""
-    return st.radio(label, list(options), index=index, format_func=format_func, key=key)
+    options = list(options)
+    value = st.pills(label, options, selection_mode='single', default=options[index],
+                     format_func=format_func, key=key)
+    return options[index] if value is None else value
 
 
 def visible_checks(label, options, default=None, format_func=str, key=None, **kwargs):
-    st.write('**' + label + '**')
-    chosen = []
-    defaults = set(default or [])
-    for i, option in enumerate(options):
-        if st.checkbox(format_func(option), value=option in defaults,
-                       key=f"checks_{key or label}_{i}"):
-            chosen.append(option)
-    return chosen
+    return st.pills(label, list(options), selection_mode='multi', default=default or [],
+                    format_func=format_func, key=key) or []
 
 
 def empty_data():
@@ -202,7 +202,8 @@ def names(d):
 
 def require_family(d):
     if not d['members']:
-        st.info('먼저 ‘가족 설정’에서 엄마, 나, 오빠 등 실제 사용할 가족을 등록해 주세요.')
+        st.info('아직 등록한 가족이 없어요. 아래 버튼으로 가족 이름부터 등록해 주세요.')
+        st.button('👨‍👩‍👧‍👦 가족 등록하러 가기', on_click=go_page, args=('가족 설정',), key='register_family_now', use_container_width=True, type='primary')
         return False
     return True
 
@@ -469,12 +470,46 @@ def meals(d):
         delete_record(d, 'meals', lambda r: f"{r['날짜']} {r['끼니']}", 'del_meal')
 
 
+HEALTH_DETAILS = {
+    '흉통 또는 심한 호흡곤란': {
+        '의미와 위험 신호': '새로 생긴 가슴 압박·조임이 가라앉지 않거나 팔·턱·등으로 퍼지고, 식은땀·메스꺼움·숨참이 동반되면 심장 응급질환 가능성을 배제할 수 없습니다. 통증 양상만으로 소화불량과 구별할 수 없습니다.',
+        '언제 도움을 받을까요?': '지속되는 갑작스러운 흉통, 심한 호흡곤란, 위 동반 증상이 있으면 즉시 119에 연락하세요. 이미 가라앉았더라도 새롭거나 반복되는 흉통은 신속히 의료진에게 평가받으세요.',
+        '지금 할 일': '활동을 멈추고 편한 자세로 쉬면서 도움을 요청하세요. 직접 운전하지 말고, 처방받지 않은 약을 임의로 복용하지 마세요.',
+        '전달할 내용': '시작 시각, 지속 시간, 통증 위치·퍼지는 부위, 숨참·식은땀 여부, 심장질환 병력과 복용약을 알려 주세요.'},
+    '갑작스러운 마비 또는 언어 장애': {
+        '의미와 위험 신호': '웃을 때 얼굴 한쪽이 처짐, 두 팔 중 한 팔이 내려감, 말이 어눌하거나 이해가 안 되는 증상은 뇌졸중 경고 신호입니다. 갑작스러운 시력 저하·한쪽 감각 저하·균형 장애도 주의해야 합니다.',
+        '언제 도움을 받을까요?': '하나라도 갑자기 생기면 즉시 119입니다. 잠깐 뒤 좋아져도 기다리지 마세요. 증상이 사라졌다고 뇌졸중 위험이 없어지는 것은 아닙니다.',
+        '지금 할 일': '마지막으로 정상이었던 시각을 기록하세요. 직접 운전하지 말고, 삼킴 장애가 있을 수 있으므로 음식·물·약을 억지로 먹이지 마세요.',
+        '전달할 내용': '마지막 정상 시각, 처음 발견한 증상, 항응고제 복용 여부와 기존 질환을 알려 주세요.'},
+    '의식 저하 또는 실신': {
+        '의미와 위험 신호': '실신은 짧게 의식을 잃는 것으로 원인이 다양합니다. 운동 중·누워 있을 때 발생했거나, 흉통·두근거림·경련·심한 부상 또는 회복 후 말·움직임 이상이 있으면 응급 평가가 필요합니다.',
+        '언제 도움을 받을까요?': '지금 깨우기 어렵거나, 1분 내 깨지 않거나, 정상 호흡이 아니거나, 완전히 회복하지 못하면 즉시 119입니다. 완전히 회복해도 실제 실신을 했다면 원인 확인을 위한 진료를 받으세요.',
+        '지금 할 일': '넘어져 다치지 않게 보호하고 호흡을 확인하세요. 의식이 없고 정상 호흡이 없으면 119 지시에 따라 심폐소생술을 시작하세요. 의식이 흐리면 물이나 음식을 먹이지 마세요.',
+        '전달할 내용': '의식을 잃은 시간, 당시 자세·활동, 경련·흉통 유무, 회복까지 걸린 시간, 복용약을 알려 주세요.'},
+    '반복되는 어지럼·두통 또는 일상생활 불편': {
+        '의미와 위험 신호': '어지럼은 빙빙 도는 느낌인지, 일어날 때 아찔한지에 따라 확인할 원인이 다릅니다. 갑자기 시작된 극심한 두통, 말·시력·한쪽 팔다리 이상, 걷기 어려움이 함께 있으면 단순 피로로 넘기지 마세요.',
+        '언제 도움을 받을까요?': '위험 신호가 있으면 즉시 119 또는 응급실입니다. 위험 신호 없이 반복되거나 일상 활동이 어렵다면 가까운 시일 내 내과·가정의학과 등에서 평가받으세요.',
+        '지금 할 일': '넘어지지 않게 앉거나 누워 쉬고 운전·높은 곳 작업을 피하세요. 일어날 때 생기는지, 머리를 돌릴 때 생기는지 관찰하되 일부러 증상을 유발하지 마세요.',
+        '전달할 내용': '발생 횟수·지속 시간·자세와의 관계, 두통 위치, 구토·귀 증상, 최근 시작하거나 바꾼 약을 기록하세요.'},
+    '혈압이 반복해서 평소와 크게 다름': {
+        '의미와 위험 신호': '한 번의 측정만으로 고혈압 여부를 판단할 수 없습니다. 운동·카페인·긴장, 커프 크기와 팔 위치도 수치에 영향을 줍니다. 흉통·호흡곤란·마비·언어 장애·의식 변화가 동반되면 수치보다 증상이 우선입니다.',
+        '언제 도움을 받을까요?': '응급 증상이 있으면 재측정으로 지체하지 말고 119입니다. 증상이 없어도 반복해서 평소와 크게 다르거나 약 복용 후 어지럼이 생기면 처방한 의료진에게 조속히 연락하세요.',
+        '지금 할 일': '조용히 5분 쉬고 등과 발을 지지한 채 팔을 심장 높이에 두고 측정하세요. 말하지 말고 1분 간격으로 2회 측정해 모두 기록하세요. 약을 임의로 추가·중단하지 마세요.',
+        '전달할 내용': '측정 날짜·시각, 두 번의 혈압과 맥박, 동반 증상, 약 이름과 복용 시각, 평소 수치를 준비하세요.'},
+    '수면·피로 문제가 계속됨': {
+        '의미와 위험 신호': '잠을 오래 자도 개운하지 않고 심한 코골이·목격된 숨 멎음·낮 졸림이 함께 있다면 수면 중 호흡 문제 평가가 필요할 수 있습니다. 피로는 빈혈·약물·기분 문제 등 여러 원인이 있어 수면 시간만으로 원인을 알 수 없습니다.',
+        '언제 도움을 받을까요?': '졸음 때문에 운전·업무가 위험하거나, 수면·피로 문제가 지속되어 생활에 지장을 주면 진료를 예약하세요. 갑작스러운 심한 숨참·흉통·의식 저하가 동반되면 즉시 119입니다.',
+        '지금 할 일': '졸리면 운전하지 마세요. 1~2주간 취침·기상·야간 각성·낮잠·음주·카페인 시각을 기록하고, 처방 없이 수면제나 진정제를 추가하지 마세요.',
+        '전달할 내용': '문제 시작 시점, 낮 졸림 정도, 코골이·숨 멎음 관찰 여부, 체중 변화, 복용약과 최근 생활 변화를 알려 주세요.'}
+}
+
+
 def care_advice(symptoms):
     emergency = {'흉통 또는 심한 호흡곤란', '갑작스러운 마비 또는 언어 장애', '의식 저하 또는 실신'}
     if emergency.intersection(symptoms):
-        return ('응급 증상일 수 있습니다. 기록을 계속하기보다 즉시 119 또는 응급실 도움을 받으세요. 혼자 운전하지 마세요.', None)
+        return ('응급 여부를 먼저 확인하세요. 아래 증상별 위험 신호에 해당하거나 현재 심한 증상이 있으면 즉시 119입니다.', None)
     if symptoms:
-        return (None, '반복되거나 생활에 지장을 주는 증상이 있어 병원 방문·의료진 상담을 권장합니다. 증상 발생 시점과 건강 기록을 준비하세요. 갑자기 심해지면 즉시 도움을 받으세요.')
+        return (None, '선택한 증상별로 진료 시점과 준비할 내용을 확인하세요. 아래 정보는 가능한 원인을 확정하는 진단이 아닙니다.')
     return (None, None)
 
 
@@ -493,6 +528,14 @@ def health(d):
         st.warning(consultation)
     else:
         st.info('증상을 선택하면 상담 안내를 드립니다. 선택하지 않았다고 건강에 이상이 없다는 뜻은 아닙니다.')
+    for symptom in symptoms:
+        with st.container(border=True):
+            st.subheader(symptom)
+            for heading, detail in HEALTH_DETAILS[symptom].items():
+                st.write('**'+heading+'**')
+                st.write(detail)
+    st.caption('정보 확인 기준: 2026-11-13. 영국 NHS 환자 안내를 참고하고 한국 응급전화 119로 안내합니다. 개인별 진료 판단은 의료진에게 확인하세요.')
+    st.markdown('참고: [흉통](https://www.nhs.uk/symptoms/chest-pain/) · [뇌졸중 증상](https://www.nhs.uk/conditions/stroke/symptoms/) · [실신](https://www.nhs.uk/symptoms/fainting/) · [혈압 측정](https://www.nhs.uk/conditions/high-blood-pressure-hypertension/) · [수면 무호흡](https://www.nhs.uk/conditions/sleep-apnoea/)')
     st.write('아래 안내는 자가 입력에 따른 일반적인 도움말입니다. 기록만으로 질병을 판단하거나 약을 바꾸지 마세요.')
     if not require_family(d):
         return
@@ -595,6 +638,7 @@ def main():
     .stApp h3 {font-size:26px !important;}
     [data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-primary"],
     [data-testid="stFormSubmitButton"] button {width:100%;white-space:normal;}
+    [data-testid="stPills"] button {min-height:64px; font-size:22px !important; padding:14px 18px; margin:4px; border-width:2px;}
     [role="tablist"] {flex-wrap:wrap;gap:8px;height:auto !important;}
     [role="tab"] {border:2px solid #CDD5E4;border-radius:14px;flex:1 1 100%;white-space:normal;}
     [role="tab"][aria-selected="true"] {background:#E8EEFB;border-color:#1751D0;}
@@ -615,7 +659,15 @@ def main():
             st.rerun()
         return
     st.title('🏡 우리家 밸런스')
-    page = large_choice('하고 싶은 일을 눌러 주세요', MENUS, key='main_menu')
+    if 'main_menu' not in st.session_state:
+        st.session_state.main_menu = '홈'
+    st.write('원하는 메뉴 버튼을 눌러 주세요')
+    icons = ['🏠', '🎯', '🍚', '💚', '👨‍👩‍👧‍👦']
+    for icon, menu in zip(icons, MENUS):
+        st.button(icon+' '+menu, key='nav_'+menu, use_container_width=True,
+                  type='primary' if st.session_state.main_menu == menu else 'secondary',
+                  on_click=go_page, args=(menu,))
+    page = st.session_state.main_menu
     st.write('접속 세션에만 저장됩니다. 가족 설정에서 백업해 주세요.')
     if st.button('로고·시작 화면으로', use_container_width=True):
         st.session_state.started = False
