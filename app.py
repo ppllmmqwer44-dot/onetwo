@@ -276,20 +276,17 @@ def settings(d):
     if d['members']:
         st.button('🎯 미션 등록하러 가기', on_click=go_page, args=('집안일 퀘스트',),
                   key='family_to_quests', use_container_width=True, type='primary')
-        with st.expander('선택 사항 · 건강 목표와 호칭 수정'):
-            st.write('초기 건강 목표는 개인 처방이 아닙니다. 본인의 건강 상태와 의료진 권고에 맞게 바꿔 주세요.')
+        with st.expander('가족 호칭 수정'):
             target = large_choice('수정할 가족', list(names(d)), format_func=names(d).get, key='edit_member')
             member = next(m for m in d['members'] if m['id']==target)
             with st.form('member_edit_'+target):
                 new_name = st.text_input('가족 호칭', value=member['이름'], max_chars=20)
-                goal = st.number_input('하루 걸음 목표(보)', 1, 100000, int(member['걸음 목표']), 500)
-                sl = st.number_input('하루 수면 목표(시간)', 1.0, 24.0, float(member['수면 목표']), 0.5)
                 if st.form_submit_button('수정 내용 저장', use_container_width=True):
                     clean = new_name.strip()
                     if not clean or any(m['id']!=target and m['이름']==clean for m in d['members']):
                         st.error('중복되지 않는 가족 호칭을 입력해 주세요.')
                     else:
-                        member.update({'이름': clean, '걸음 목표': goal, '수면 목표': sl})
+                        member['이름'] = clean
                         st.rerun()
     with st.expander('전체 기록 초기화'):
         agreed = st.checkbox('사진과 미션금을 포함한 모든 기록 삭제에 동의합니다.', key='reset_consent')
