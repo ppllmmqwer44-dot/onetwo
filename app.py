@@ -507,27 +507,36 @@ def meals(d):
     n = names(d)
     goal = st.number_input('이번 주 함께 식사 목표(회)', 1, 21, int(d['meal_goal']))
     d['meal_goal'] = goal
-    st.caption('가족 2명 이상이 함께한 끼니를 1회로 계산합니다. 같은 날짜·끼니는 중복 계산하지 않습니다.')
     tab1, tab2 = st.tabs(['가능 시간 찾기', '식사 기록·분석'])
     with tab1:
-        who = large_choice('가능 시간을 등록할 가족', list(n), format_func=n.get)
-        st.write('요일별로 아침·점심·저녁 버튼만 눌러 주세요.')
-        with st.form('availability_'+who):
-            selected_slots = {}
-            for day_name in DAYS:
-                st.write('**'+day_name+'요일**')
-                existing = [r['끼니'] for r in d['availability'] if r['구성원']==who and r['요일']==day_name]
-                selected_slots[day_name] = st.pills(day_name+'요일 가능한 끼니', SLOTS,
-                    selection_mode='multi', default=existing, key='avail_'+who+'_'+day_name,
-                    label_visibility='collapsed') or []
-                if day_name != DAYS[-1]:
-                    st.divider()
-            if st.form_submit_button('식사 가능 시간 저장', use_container_width=True):
-                d['availability'] = [r for r in d['availability'] if r['구성원']!=who]
-                for day_name, chosen in selected_slots.items():
-                    for meal in chosen:
-                        d['availability'].append({'구성원':who,'요일':day_name,'끼니':meal})
-                st.rerun()
+        st.subheader('한 번에 식사 시간 정하기')
+        with st.form('family_availability_quick'):
+            everyone = st.toggle('온 가족 함께', value=True)
+            selected_people = st.pills('참여할 가족', list(n), format_func=n.get,
+                                       selection_mode='multi', default=list(n)) or []
+            days = st.pills('요일', DAYS, selection_mode='multi', default=['토','일']) or []
+            slots = st.pills('끼니', SLOTS, selection_mode='multi', default=['저녁']) or []
+            st.caption('선택한 가족에게 같은 시간을 한 번에 추가해요.')
+            if st.form_submit_button('함께할 시간 추가',use_container_width=True):
+                people = list(n) if everyone else selected_people
+                if len(people)<2 or not days or not slots:
+                    st.error('가족 2명 이상과 요일·끼니를 선택해 주세요.')
+                else:
+                    existing = {(r['구성원'],r['요일'],r['끼니']) for r in d['availability']}
+                    for person in people:
+                        for day_name in days:
+                            for meal in slots:
+                                item = (person,day_name,meal)
+                                if item not in existing:
+                                    d['availability'].append({'구성원':person,'요일':day_name,'끼니':meal})
+                                    existing.add(item)
+                    st.rerun()
+        if d['availability']:
+            with st.expander('등록한 시간 수정'):
+                who = large_choice('가족',list(n),format_func=n.get,key='edit_avail_person')
+                if st.button('이 가족의 가능 시간 비우기',use_container_width=True):
+                    d['availability'] = [r for r in d['availability'] if r['구성원']!=who]
+                    st.rerun()
         result = meal_candidates(d)
         if result:
             st.subheader('함께 먹기 좋은 시간 TOP 3')
@@ -569,7 +578,6 @@ def meals(d):
                           yaxis=dict(title=None, range=[0,max(3,int(frame['함께한 식사(회)'].max()))+0.6],
                                      dtick=1, fixedrange=True, gridcolor='#E8EEE9', zeroline=False))
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar':False})
-        st.dataframe(frame, hide_index=True)
         for member in d['members']:
             count = sum(member['id'] in r['참여'] for r in records)
             st.write(f"• {member['이름']}: 이번 주 {count}회 참여")
