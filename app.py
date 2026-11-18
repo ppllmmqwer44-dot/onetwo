@@ -530,30 +530,6 @@ def meals(d):
         notice = st.session_state.pop('meal_schedule_notice',None)
         if notice:
             st.success(notice)
-        if d['availability']:
-            st.subheader('등록된 일정')
-            for day_name in DAYS:
-                for slot in SLOTS:
-                    participants = list(dict.fromkeys(r['구성원'] for r in d['availability']
-                        if r['요일']==day_name and r['끼니']==slot and r['구성원'] in n))
-                    if not participants:
-                        continue
-                    with st.container(border=True):
-                        st.write('**'+day_name+'요일 '+slot+'**')
-                        st.write(' · '.join(n[i] for i in participants))
-                        with st.expander('참여 가족 수정'):
-                            chosen = st.pills('참여 가족',list(n),format_func=n.get,
-                                selection_mode='multi',default=participants,key='schedule_edit_'+day_name+'_'+slot) or []
-                            if st.button('변경 저장',key='schedule_save_'+day_name+'_'+slot,use_container_width=True):
-                                d['availability'] = [r for r in d['availability'] if not (r['요일']==day_name and r['끼니']==slot)]
-                                d['availability'].extend({'구성원':person,'요일':day_name,'끼니':slot} for person in chosen)
-                                st.rerun()
-        if d['availability']:
-            with st.expander('등록한 시간 수정'):
-                who = large_choice('가족',list(n),format_func=n.get,key='edit_avail_person')
-                if st.button('이 가족의 가능 시간 비우기',use_container_width=True):
-                    d['availability'] = [r for r in d['availability'] if r['구성원']!=who]
-                    st.rerun()
         result = meal_candidates(d)
         if result:
             st.subheader('함께 먹기 좋은 시간 TOP 3')
