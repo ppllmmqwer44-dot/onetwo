@@ -626,6 +626,13 @@ def care_advice(symptoms):
     return (None, None)
 
 
+def sleep_label(minutes):
+    hours, mins = divmod(int(minutes), 60)
+    if not hours:
+        return f'{mins}분'
+    return f'{hours}시간' + (f' {mins}분' if mins else '')
+
+
 def health(d):
     st.header('💚 부모님 건강')
     st.caption('생활 관리 참고용 · 진단은 의료진에게')
@@ -674,12 +681,12 @@ def health(d):
     member = next(m for m in d['members'] if m['id'] == who)
     with st.form('health_add_'+who, clear_on_submit=True):
         day = st.date_input('기록 날짜', max_value=today_kst())
-        steps = st.number_input('하루 걸음 수(보)', 0, 100000, 0, 100)
-        sleep = st.number_input('수면 시간(시간)', 0.0, 24.0, 7.0, 0.5)
+        minutes = st.select_slider('수면 시간', options=list(range(0, 1441, 10)), value=420, format_func=sleep_label)
+        sleep = minutes / 60
         if st.form_submit_button('건강 기록 저장', use_container_width=True):
             d['health'] = [r for r in d['health'] if not (r['구성원'] == who and r['날짜'] == str(day))]
             d['health'].append({'id': uid(), '구성원': who, '날짜': str(day),
-                                '걸음': steps, '수면': sleep, '수축기': None, '이완기': None, '메모': ''})
+                                '걸음': 0, '수면': sleep, '수축기': None, '이완기': None, '메모': ''})
             st.rerun()
     period = large_choice('분석 기간', [7, 14, 30], format_func=lambda x: f'최근 {x}일')
     start = today_kst() - timedelta(days=period-1)
@@ -688,32 +695,22 @@ def health(d):
         st.write('첫 건강 기록을 남겨 보세요.')
     else:
         frame = pd.DataFrame(records)
-        mean_steps, mean_sleep = frame['걸음'].mean(), frame['수면'].mean()
-        a, b, c = st.columns(3)
-        a.metric('기록일 평균 걸음', f'{mean_steps:,.0f}보')
-        b.metric('기록일 평균 수면', f'{mean_sleep:.1f}시간')
-        c.metric('기록 일수', f'{len(records)} / {period}일')
-        steps_rate = 100 * sum(r['걸음'] >= member['걸음 목표'] for r in records) / len(records)
-        sleep_rate = 100 * sum(r['수면'] >= member['수면 목표'] for r in records) / len(records)
-        st.write(f"개인 목표 충족일 비율: 걸음 {steps_rate:.0f}% · 수면 {sleep_rate:.0f}% (분모: 기록일 {len(records)}일)")
-        if mean_steps < member['걸음 목표']:
-            st.write(f"걷기 실천: 기록일 평균이 개인 목표보다 {member['걸음 목표']-mean_steps:,.0f}보 적습니다. 무리하지 않는 범위에서 짧은 산책을 가족과 나눠 시도하세요.")
-        else:
-            st.success('걷기: 설정한 개인 목표를 평균적으로 충족했습니다. 통증이나 피로가 있으면 운동량을 조절하고 상담하세요.')
-        if mean_sleep < member['수면 목표']:
-            st.write('수면 실천: 설정한 수면 목표보다 평균이 짧습니다. 일정한 취침 시간과 편안한 수면 환경을 함께 준비하세요.')
-        else:
-            st.write('수면: 설정한 시간 목표 이상입니다. 과도한 졸림이나 수면 불편이 있으면 별도로 상담하세요.')
+        st.metric('평균 수면', sleep_label(round(frame['수면'].mean()*6)*10))
         calendar = pd.DataFrame({'날짜': pd.date_range(start, today_kst()).strftime('%Y-%m-%d')})
         plotted = calendar.merge(frame, on='날짜', how='left')
-        plotted['걸음 목표'] = member['걸음 목표']
-        plotted['수면 목표'] = member['수면 목표']
-        chart(plotted, '날짜', ['걸음', '걸음 목표'], '걸음 수와 개인 목표(보)', True)
-        chart(plotted, '날짜', ['수면', '수면 목표'], '수면 시간과 개인 목표(시간)', True)
-        show = frame[['날짜', '걸음', '수면']].rename(columns={'걸음':'걸음(보)', '수면':'수면(시간)'})
-        st.dataframe(show, hide_index=True)
-        st.download_button('선택 기간 건강 기록 CSV', show.to_csv(index=False).encode('utf-8-sig'),
-                           file_name='건강기록.csv', mime='text/csv')
+        plotted['수면(분)'] = plotted['수면'] * 60
+        plotted['표시'] = plotted['수면'].apply(lambda v: sleep_label(round(v*60)) if pd.notna(v) else '')
+        plotted['날짜 표시'] = pd.to_datetime(plotted['날짜']).dt.strftime('%m월 %d일')
+        fig = px.line(plotted, x='날짜 표시', y='수면(분)', custom_data=['표시'],
+                      color_discrete_sequence=['#21854B'], markers=True)
+        fig.update_traces(hovertemplate='%{x} · %{customdata[0]}<extra></extra>',connectgaps=False)
+        fig.update_layout(height=270,margin=dict(l=5,r=5,t=10,b=10),
+                          paper_bgcolor='white',plot_bgcolor='white',font=dict(size=17))
+        fig.update_xaxes(title=None,type='category',fixedrange=True)
+        fig.update_yaxes(title=None,tickmode='array',tickvals=list(range(0,1441,120)),
+                         ticktext=[sleep_label(v) for v in range(0,1441,120)],
+                         rangemode='tozero',gridcolor='#E8EEE9',fixedrange=True)
+        st.plotly_chart(fig,use_container_width=True,config={'displayModeBar':False})
     delete_record(d, 'health', lambda r: f"{n[r['구성원']]} · {r['날짜']}", 'del_health')
 
 
