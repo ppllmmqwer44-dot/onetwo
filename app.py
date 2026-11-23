@@ -87,6 +87,7 @@ def open_family():
     if 'family_key' in state:
         return True
     st.header('우리家 밸런스')
+    st.write('집안일을 퀘스트로 나누고, 가족 식사 시간과 건강 일정을 함께 챙겨요.')
     st.write('처음이라면 가족 저장 공간을 만들고, 다시 접속할 때는 가족 코드를 입력하세요.')
     code = st.text_input('가족 코드', type='password', max_chars=150, placeholder='이전에 발급받은 코드')
     create = st.button('새 가족 저장 공간 만들기', type='primary', use_container_width=True)
@@ -1309,7 +1310,7 @@ def main():
     </style>''', unsafe_allow_html=True)
     if not st.session_state.get('splash_seen'):
         logo = st.empty()
-        logo.markdown(f'<div style="position:fixed;inset:0;z-index:99999;background:#d5ebff;display:grid;place-items:center"><img alt="우리家 밸런스" style="width:min(64vw,290px);border-radius:22%" src="data:image/png;base64,{APP_ICON}"></div>',unsafe_allow_html=True)
+        logo.markdown(f'<div style="position:fixed;inset:0;z-index:99999;background:#d5ebff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;padding:16px"><img alt="우리家 밸런스" style="width:min(64vw,290px);border-radius:22%" src="data:image/png;base64,{APP_ICON}"><span style="color:#173b5d;font-size:clamp(16px,3.5vw,20px);font-weight:600">집안일은 나누고, 가족의 하루는 함께.</span></div>',unsafe_allow_html=True)
         time.sleep(2)
         logo.empty()
         st.session_state.splash_seen=True
