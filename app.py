@@ -494,14 +494,22 @@ def quest_summary(d):
 
 
 COINS_PER_MISSION = 10
-REWARD_DEFAULTS = [dict(id='allowance_2000', name='용돈 2,000원', cost=40)]
+REWARD_DEFAULTS = [dict(id=f'allowance_{amount}', name=f'용돈 {amount:,}원', cost=amount//50)
+                   for amount in range(1000, 5001, 1000)]
 
 
 def reward_products(d):
-    products = d.get('rewards', REWARD_DEFAULTS)
-    if any(r['id'] == 'allowance_2000' for r in products):
-        return products
-    return [*REWARD_DEFAULTS, *products]
+    custom = d.get('rewards', [])
+    default_ids = {r['id'] for r in REWARD_DEFAULTS}
+    return [*REWARD_DEFAULTS, *(r for r in custom if r['id'] not in default_ids)]
+
+
+def daily_reward_products(d, family_key, day):
+    from random import Random
+    featured = Random(f'{family_key}:{day}').sample(REWARD_DEFAULTS, 3)
+    default_ids = {r['id'] for r in REWARD_DEFAULTS}
+    return [*sorted(featured, key=lambda r: r['cost']),
+            *(r for r in reward_products(d) if r['id'] not in default_ids)]
 
 
 def member_rewards(d, member):
@@ -728,7 +736,8 @@ def wallet(d):
     with shop:
         if buyer is None:
             st.caption('위에서 보상을 받을 가족을 선택해 주세요.')
-        for product in reward_products(d):
+        st.caption('오늘의 랜덤 용돈 보상 · 매일 3가지 금액이 나와요.')
+        for product in daily_reward_products(d, st.session_state.family_key, today_kst()):
             with st.container(border=True):
                 st.write(f"**{product['name']} · 🪙 {product['cost']:,}**")
                 missing=product['cost']-balance
@@ -749,7 +758,7 @@ def shop_admin(d):
         st.caption('배포 설정에 관리자 비밀번호(BALANCE_ADMIN_PIN)를 지정하면 상품을 관리할 수 있어요.');return
     pin=st.text_input('관리자 비밀번호',type='password',key='shop_admin_pin')
     if not secrets.compare_digest(pin.encode(),expected.encode()): return
-    products=reward_products(d)
+    products=[r for r in reward_products(d) if r['id'] not in {x['id'] for x in REWARD_DEFAULTS}]
     choice=draft('large_choice','shop_product','상품 선택',['새 상품']+[r['id'] for r in products],format_func=lambda x: next((r['name'] for r in products if r['id']==x),x))
     old=next((r for r in products if r['id']==choice),None)
     label=draft('text_input','shop_name_'+choice,'보상 이름',value=old['name'] if old else '',max_chars=60)
