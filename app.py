@@ -834,6 +834,10 @@ def main():
     .st-key-bottom_nav .stButton button {background:#eef6ff!important;border:1px solid #a5c5df!important;}
     .st-key-bottom_nav button[data-testid="stBaseButton-primary"] {background:#123766!important;}
     .st-key-bottom_nav button[data-testid="stBaseButton-primary"] p {color:#fff!important;}
+    .app-masthead {background:#fff !important;border:1px solid #8fb4d1;box-shadow:0 3px 12px #143d6414;}
+    [data-testid="stExpander"] details {background:#fff !important;border:1px solid #8fb4d1 !important;border-radius:14px;}
+    [data-testid="stExpander"] summary {background:#fff !important;color:#173b5d !important;border-radius:inherit;}
+    [data-testid="stExpander"] details[open] summary {background:#eff7ff !important;border-bottom:1px solid #b8d2e8;}
     </style>''', unsafe_allow_html=True)
     if 'data' not in st.session_state:
         st.session_state.data = empty_data()
