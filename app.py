@@ -780,6 +780,20 @@ def main():
     [data-testid="stVerticalBlockBorderWrapper"]:has(.completed-mission-marker):not(:has([data-testid="stVerticalBlockBorderWrapper"] .completed-mission-marker)) {
         background:#F1F7F3 !important; border-color:#91B89D !important;
     }
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {background:#f5f8f6 !important;}
+    .block-container {padding-bottom:calc(118px + env(safe-area-inset-bottom));}
+    .app-masthead {display:flex;align-items:center;gap:12px;padding:14px 18px;border-radius:20px;background:linear-gradient(115deg,#dff1e5,#fff7e6);color:#184932;font-size:21px;}
+    .app-masthead img {width:38px;height:38px;border-radius:11px;}
+    .stApp h1,.stApp h2,.stApp h3 {letter-spacing:-.035em;color:#173c2d;}
+    [data-testid="stVerticalBlockBorderWrapper"], [data-testid="stForm"] {background:#fff;border-radius:20px;border-color:#dce9df;}
+    .st-key-bottom_nav {position:fixed;bottom:0;left:50%;transform:translateX(-50%);z-index:1000;width:min(100%,850px);background:#fff;border:1px solid #dce9df;border-radius:22px 22px 0 0;box-shadow:0 -5px 24px #173c2d15;padding:8px 8px calc(8px + env(safe-area-inset-bottom));}
+    .st-key-bottom_nav [data-testid="stHorizontalBlock"] {display:grid!important;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px!important;}
+    .st-key-bottom_nav [data-testid="stColumn"] {width:100%!important;min-width:0!important;}
+    .st-key-bottom_nav .stButton button {min-height:58px;padding:3px 1px;border:0!important;background:#fff!important;}
+    .st-key-bottom_nav .stButton button p {font-size:14px!important;line-height:1.25!important;color:#344b40!important;}
+    .st-key-bottom_nav button[data-testid="stBaseButton-primary"] {background:#ddf2e4!important;}
+    .st-key-bottom_nav button[data-testid="stBaseButton-primary"] p {color:#145731!important;font-weight:800;}
+    .st-key-bottom_nav button:focus-visible {outline:2px solid #17643b;outline-offset:-2px;}
     </style>''', unsafe_allow_html=True)
     if 'data' not in st.session_state:
         st.session_state.data = empty_data()
@@ -797,24 +811,19 @@ def main():
             st.session_state.main_menu = '홈'
             st.rerun()
         return
-    st.title('🏡 우리家 밸런스')
-    if 'main_menu' not in st.session_state:
-        st.session_state.main_menu = '홈'
-    st.write('원하는 메뉴 버튼을 눌러 주세요')
-    icons = ['🏠', '🎯', '🍚', '💚', '👨‍👩‍👧‍👦']
-    for icon, menu in zip(icons, MENUS):
-        st.button(icon+' '+menu, key='nav_'+menu, use_container_width=True,
-                  type='primary' if st.session_state.main_menu == menu else 'secondary',
-                  on_click=go_page, args=(menu,))
-    page = st.session_state.main_menu
-    st.write('현재 접속 중에만 저장됩니다. 새로고침·재접속하면 사라질 수 있습니다.')
-    if st.button('로고·시작 화면으로', use_container_width=True):
-        st.session_state.started = False
-        st.rerun()
-    d = st.session_state.data
+    page = st.session_state.get('main_menu', '홈')
+    st.markdown(f'<div class="app-masthead"><img src="data:image/png;base64,{APP_ICON}" alt=""><strong>우리家 밸런스</strong></div>', unsafe_allow_html=True)
     {'홈': home, '집안일 퀘스트': quests, '함께 식사': meals,
-     '부모님 건강': health, '가족 설정': settings}[page](d)
-    st.divider()
+     '부모님 건강': health, '가족 설정': settings}[page](st.session_state.data)
+    if page == '가족 설정':
+        st.caption('기록은 현재 접속 중에만 보관됩니다.')
+    with st.container(key='bottom_nav'):
+        cols = st.columns(5, gap='small')
+        for col, menu, icon, label in zip(cols, MENUS, ['🏠','🎯','🍚','💚','⚙️'], ['홈','퀘스트','식사','건강','설정']):
+            with col:
+                st.button(f'{icon}  \n{label}', key='nav_'+menu, use_container_width=True,
+                          type='primary' if page == menu else 'secondary',
+                          on_click=go_page, args=(menu,))
 
 
 if __name__ == '__main__':
