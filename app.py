@@ -758,8 +758,7 @@ def quests(d):
             title = draft('text_input', 'quests_537', '어떤 미션인가요?', max_chars=60, placeholder='예: 설거지하기')
             detail = ''
             people = draft('visible_checks', 'quests_539', '누가 할까요?', list(n), format_func=n.get)
-            reward = draft('number_input', 'quests_540', '한 사람에게 줄 미션금(원)', 0, 1000000, 2000, 100)
-            coins = draft('number_input','mission_coin_reward','완료 보상 코인',1,10000,COINS_PER_MISSION,help='현금 미션금과 별도로 적립돼요.')
+            reward = draft('number_input','unified_mission_reward','한 사람에게 줄 미션금 (코인)',0,1000000,COINS_PER_MISSION,step=1,help='완료 사진을 제출하면 바로 적립돼요.')
             consent = st.checkbox('안전과 미션금을 가족과 합의했습니다.')
             if st.button('미션 등록하기', use_container_width=True):
                 if not title.strip() or not people or not consent:
@@ -771,7 +770,7 @@ def quests(d):
                     group_id = uid()
                     for person in people:
                         d['quests'].append({'id': uid(), '그룹': group_id, '제목': title.strip(), '설명': detail,
-                                            '담당': person, '등록자': actor, '용돈': reward, '코인': int(coins),
+                                            '담당': person, '등록자': actor, '용돈': reward, '코인': int(reward),
                                             '상태': '진행 중', '사진': None, '완료일': None, '지급일': None})
                     st.session_state.quest_step = steps[1]
                     st.session_state.quest_notice = '미션을 등록했어요! 담당 가족은 할 일을 마친 뒤 사진을 올리세요.'
@@ -795,10 +794,10 @@ def quests(d):
                 st.divider()
                 st.write('**함께할 가족**')
                 st.write(' · '.join(('✓ ' if q['상태'] in ('지급 대기','지급 완료') else '')+n[q['담당']] for q in group))
-                if len({q['용돈'] for q in group}) == 1:
-                    st.write(f"💰 1인당 미션금 {first['용돈']:,}원")
+                if len({q.get('코인', COINS_PER_MISSION) for q in group}) == 1:
+                    st.write(f"🪙 1인당 미션금 {first.get('코인', COINS_PER_MISSION):,}코인")
                 else:
-                    st.write('미션금: '+ ' / '.join(n[q['담당']]+f" {q['용돈']:,}원" for q in group))
+                    st.write('미션금: ' + ' / '.join(n[q['담당']] + f" {q.get('코인', COINS_PER_MISSION):,}코인" for q in group))
                 st.divider()
                 if first['설명']:
                     st.write(first['설명'])
@@ -812,7 +811,7 @@ def quests(d):
                 q = next(item for item in group if item['담당']==selected)
                 if q['상태'] in ('지급 대기','지급 완료'):
                     st.success('✓ '+n[selected]+'님 완료 · 미션금 적립됨')
-                st.write('상태: '+{'진행 중':'진행 중', '지급 대기':'미션 성공 · 적립 완료 (현금 지급 대기)', '지급 완료':'미션 완료 · 미션금 받음'}.get(q['상태'],q['상태']))
+
                 if q.get('사진'):
                     st.image(base64.b64decode(q['사진']), caption=n[selected]+'의 완료 사진', use_container_width=True)
                 if q['상태']=='진행 중':
@@ -855,22 +854,14 @@ def quests(d):
                                 if dk.endswith('_reward_family'):
                                     st.session_state.drafts.pop(dk)
                                     st.session_state.pop('draft_widget_'+dk,None)
-                            total = sum(item['용돈'] for item in d['quests'] if item['담당']==selected and item['상태'] in ('지급 대기','지급 완료'))
-                            st.session_state.quest_notice = f"{n[selected]}님 미션 성공! +{q['용돈']:,}원 적립 🎉 총 {total:,}원을 모았어요."
+                            st.session_state.quest_notice = f"{n[selected]}님 미션 성공! +{q['코인']:,}코인 적립 🎉"
                             saved_rerun()
                         except ValueError as exc:
                             st.error(str(exc))
-                if actor==q['등록자'] and q['상태']=='지급 대기':
-                    paid = st.checkbox('실제로 미션금을 주었습니다.', key='paid_'+q['id'])
-                    if st.button('미션금 지급 완료', key='pay_'+q['id'], disabled=not paid, use_container_width=True):
-                        transition_quest(q, '지급 완료', actor)
-                        saved_rerun()
     else:
-        reward_who = draft('large_choice', 'quests_614', '수령금 확인할 가족', list(n), format_func=n.get, index=list(n).index(st.session_state.get('reward_family') if st.session_state.get('reward_family') in n else actor), key='reward_family')
-        own = next(row for row in quest_summary(d) if row['구성원']==n[reward_who])
-        earned = own['받을 미션금(원)'] + own['받은 미션금(원)']
-        st.metric(n[reward_who]+'님의 미션 수령금', f'{earned:,}원')
-        st.caption('사진으로 완료한 미션금이 바로 합산돼요. 앱 내 보상 기록입니다.')
+        reward_who = draft('large_choice', 'quests_614', '미션금 확인할 가족', list(n), format_func=n.get, index=list(n).index(st.session_state.get('reward_family') if st.session_state.get('reward_family') in n else actor), key='reward_family')
+        earned = sum(r['coins'] for r in coin_state(d)[2] if r['member']==reward_who)
+        st.metric(n[reward_who]+'님의 누적 미션금', f'{earned:,}코인')
         if d['quests']:
             st.subheader('가족별 미션 현황')
             rows = quest_summary(d)
