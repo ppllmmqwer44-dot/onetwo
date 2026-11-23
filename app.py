@@ -385,12 +385,22 @@ def quests(d):
     if not require_family(d):
         return
     n = names(d)
-    st.write('할 일을 끝내고 사진을 올리면 미션 완료! 정해진 시간이나 마감일은 없어요.')
-    actor = large_choice('누가 사용하나요?', list(n), format_func=n.get, key='quest_actor')
-    tab1, tab2, tab3 = st.tabs(['내 미션', '미션 등록', '미션금·가족 분담'])
-    with tab2:
-        st.subheader('가족 누구나 미션을 등록할 수 있어요')
-        st.write('현재 선택한 가족 이름으로 등록됩니다. 여러 담당자를 골라도 미션 카드는 하나로 보여요. 사진 제출과 미션금은 각자 따로 기록해요.')
+    st.write('**미션 등록 → 할 일 끝내고 사진 제출 → 미션금 확인**')
+    steps = ['① 미션 만들기', '② 미션 완료하기', '③ 미션금 보기']
+    default_step = steps[1] if d['quests'] else steps[0]
+    step = st.session_state.get('quest_step', default_step)
+    with st.container(key='quest_steps'):
+        for option in steps:
+            st.button(option, key='quest_step_'+option, type='primary' if option == step else 'secondary',
+                      on_click=st.session_state.update, args=({'quest_step': option},), use_container_width=True)
+    actor = st.session_state.get('quest_actor')
+    if actor not in n:
+        actor = next(iter(n))
+    if step != steps[2]:
+        actor = large_choice('등록하는 가족' if step == steps[0] else '미션을 볼 가족',
+                             list(n), format_func=n.get, index=list(n).index(actor), key='quest_actor')
+    if step == steps[0]:
+        st.write('할 일, 맡을 가족, 미션금을 정해 주세요.')
         with st.form('new_quest', clear_on_submit=True):
             title = st.text_input('어떤 미션인가요?', max_chars=60, placeholder='예: 설거지하기')
             detail = ''
@@ -406,12 +416,14 @@ def quests(d):
                         d['quests'].append({'id': uid(), '그룹': group_id, '제목': title.strip(), '설명': detail,
                                             '담당': person, '등록자': actor, '용돈': reward,
                                             '상태': '진행 중', '사진': None, '완료일': None, '지급일': None})
+                    st.session_state.quest_step = steps[1]
+                    st.session_state.quest_notice = '미션을 등록했어요! 담당 가족은 할 일을 마친 뒤 사진을 올리세요.'
                     st.rerun()
-    with tab1:
+    elif step == steps[1]:
         groups = group_missions(d['quests'])
         visible = [group for group in groups if any(actor in [q['담당'], q['등록자']] for q in group)]
         if not visible:
-            st.write('아직 미션이 없어요. 미션 등록에서 가족의 첫 미션을 만들어 주세요.')
+            st.write('이 가족이 맡거나 등록한 미션이 없어요. 다른 가족을 선택하거나 ①에서 미션을 만들 수 있어요.')
         for group in reversed(visible):
             first = group[0]
             my_record = next((item for item in group if item['담당']==actor), None)
@@ -447,7 +459,7 @@ def quests(d):
                     st.image(base64.b64decode(q['사진']), caption=n[selected]+'의 완료 사진', use_container_width=True)
                 if q['상태']=='진행 중':
                     photo = st.file_uploader('완료 사진 선택하기', type=['jpg','jpeg','png','webp'], key='photo_'+q['id'])
-                    st.caption('선택한 가족 본인이 제출해 주세요. 현재 사용자 선택과 관계없이 이곳에서 사진을 올릴 수 있어요. 얼굴·주소는 피하고 10MB 이하 사진을 선택하세요.')
+                    st.caption('얼굴·주소가 없는 완료 사진을 올려 주세요.')
                     if st.button('📷 사진 제출하고 미션 완료!', key='finish_'+q['id'], disabled=photo is None, use_container_width=True):
                         try:
                             encoded = prepare_photo(photo.getvalue())
@@ -466,8 +478,7 @@ def quests(d):
                     if st.button('미션금 지급 완료', key='pay_'+q['id'], disabled=not paid, use_container_width=True):
                         transition_quest(q, '지급 완료', actor)
                         st.rerun()
-    with tab3:
-        frame = pd.DataFrame(quest_summary(d))
+    else:
         reward_who = large_choice('수령금 확인할 가족', list(n), format_func=n.get, index=list(n).index(actor), key='reward_family')
         own = next(row for row in quest_summary(d) if row['구성원']==n[reward_who])
         earned = own['받을 미션금(원)'] + own['받은 미션금(원)']
@@ -857,6 +868,8 @@ def main():
     .st-key-feature_grid .stButton button:disabled {opacity:.8!important;}
     .st-key-feature_grid .stButton button p {overflow-wrap:anywhere;}
     .st-key-home_settings {max-width:10rem;margin-top:12px;margin-left:auto;}
+    .st-key-quest_steps button[data-testid="stBaseButton-secondary"] {background:#fff!important;border:1px solid #8fb4d1!important;}
+    .st-key-quest_steps button[data-testid="stBaseButton-secondary"] p {color:#173b5d!important;}
     </style>''', unsafe_allow_html=True)
     if 'data' not in st.session_state:
         st.session_state.data = empty_data()
