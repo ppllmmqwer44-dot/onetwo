@@ -757,10 +757,14 @@ def quests(d):
         with st.container(border=True):
             title = draft('text_input', 'quests_537', '어떤 미션인가요?', max_chars=60, placeholder='예: 설거지하기')
             detail = ''
-            people = draft('visible_checks', 'quests_539', '누가 할까요?', list(n), format_func=n.get)
+            eligible = [member_id for member_id in n if member_id != actor]
+            chosen = draft('visible_checks', 'quest_assignees_'+actor, '누가 할까요?', eligible, format_func=n.get) if eligible else []
+            people = [member_id for member_id in chosen if member_id in eligible]
+            if not eligible:
+                st.write('미션을 맡길 다른 가족을 가족 설정에서 먼저 추가해 주세요.')
             reward = draft('number_input','unified_mission_reward','한 사람에게 줄 미션금 (코인)',0,1000000,COINS_PER_MISSION,step=1,help='완료 사진을 제출하면 바로 적립돼요.')
             consent = st.checkbox('안전과 미션금을 가족과 합의했습니다.')
-            if st.button('미션 등록하기', use_container_width=True):
+            if st.button('미션 등록하기', use_container_width=True, disabled=not eligible):
                 if not title.strip() or not people or not consent:
                     
                     if not title.strip(): st.error('할 일: 미션 이름을 적어 주세요.')
