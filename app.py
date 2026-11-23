@@ -826,8 +826,8 @@ def quests(d):
                 if first['설명']:
                     st.write(first['설명'])
                     st.divider()
-                completed = [n[q['담당']] for q in group if q['상태'] != '진행 중']
-                st.write('완료한 가족: '+(' · '.join(completed) if completed else '아직 없어요'))
+                completed = [n[item['담당']] for item in group if item['상태'] in COMPLETED]
+                st.write(f'완료 {len(completed)}/{len(group)}명' + (' · ' + ' · '.join(completed) if completed else ''))
                 st.divider()
                 st.write('**📷 완료 사진·진행 상태**')
                 selected = draft('large_choice', 'quests_584' + first['id'], '사진을 제출하거나 확인할 가족',
@@ -873,9 +873,11 @@ def quests(d):
                             st.session_state.coin_celebration = (q['코인'],new_level if new_level > old_level else None)
                             st.session_state.drafts.pop(photo_key,None)
                             st.session_state.reward_family = selected
-                            st.session_state.quest_step = steps[2]
+                            st.session_state.active_actor = selected
+                            st.session_state.mission_filter = '완료한 미션'
+                            st.session_state.quest_focus = q['id']
                             for dk in list(st.session_state.drafts):
-                                if dk.endswith('_reward_family'):
+                                if dk.endswith(('_reward_family', '_quest_actor')):
                                     st.session_state.drafts.pop(dk)
                                     st.session_state.pop('draft_widget_'+dk,None)
                             st.session_state.quest_notice = f"{n[selected]}님 미션 성공! +{q['코인']:,}코인 적립 🎉"
