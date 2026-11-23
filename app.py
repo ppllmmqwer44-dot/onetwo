@@ -1,13 +1,15 @@
-"""우리家 밸런스 — 실행: pip install -r requirements.txt && streamlit run app.py
-GitHub에 두 파일을 올린 뒤 Streamlit Community Cloud에서 app.py를 지정하세요.
-별도 API 키 불필요. 데이터는 접속 세션에만 보관됩니다. 종료 전 JSON 백업하세요.
-공유 데이터베이스/인증이 없는 개인·가족 시연용이며, 의료 진단 도구가 아닙니다.
-퀘스트 역할 선택은 인증이 아닙니다. 용돈은 송금되지 않고 지급 여부만 기록합니다.
-GitHub Pages는 Python 앱을 실행하지 않습니다. Streamlit Community Cloud에서 배포하세요.
+"""우리家 밸런스 — streamlit run app.py.
+배포 시 BALANCE_DB를 영속 디스크의 비공개 파일 경로로 설정하세요.
+가족 코드가 있는 사람은 가족 기록을 열 수 있습니다. DB를 GitHub에 올리지 마세요.
 """
 from __future__ import annotations
 
 import time
+import sqlite3
+import os
+import secrets
+import hashlib
+from pathlib import Path
 import base64
 import io
 from PIL import Image, ImageOps
@@ -29,6 +31,140 @@ SLOTS = ['아침', '점심', '저녁']
 MENUS = ['홈', '집안일 퀘스트', '함께 식사', '부모님 건강', '가족 설정']
 
 
+def db_open():
+    path = Path(os.environ.get('BALANCE_DB', 'balance_private.sqlite3'))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path, timeout=12)
+    conn.execute('CREATE TABLE IF NOT EXISTS family (id TEXT PRIMARY KEY, rev INTEGER NOT NULL, payload TEXT NOT NULL)')
+    return conn
+
+
+def db_load(code):
+    with db_open() as conn:
+        row = conn.execute('SELECT rev,payload FROM family WHERE id=?', (code,)).fetchone()
+    return (row[0], json.loads(row[1])) if row else None
+
+
+def db_save(code, revision, payload):
+    text = json.dumps(payload, ensure_ascii=False)
+    with db_open() as conn:
+        if revision == -1:
+            conn.execute('INSERT INTO family VALUES (?,0,?)', (code,text))
+            return 0
+        cursor = conn.execute('UPDATE family SET rev=rev+1,payload=? WHERE id=? AND rev=?', (text,code,revision))
+        if cursor.rowcount != 1:
+            raise ValueError('다른 화면에서 기록이 변경되었어요. 이 화면의 변경은 저장되지 않았습니다.')
+    return revision+1
+
+
+def persist():
+    state = st.session_state
+    payload = {'data':state.data,'drafts':state.get('drafts',{}),
+               'ui':{k:state[k] for k in ('setup_done','tutorial_done','tutorial_step','main_menu','quest_step','reward_family','active_actor') if k in state}}
+    text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    if text == state.get('saved_snapshot'):
+        return False
+    try:
+        state.revision = db_save(state.family_key,state.revision,payload)
+    except (sqlite3.Error, ValueError) as exc:
+        st.error(str(exc) if isinstance(exc,ValueError) else '저장 공간에 연결할 수 없어요. 새로고침하지 말고 다시 시도해 주세요.')
+        if isinstance(exc,ValueError) and st.button('최신 저장본 다시 열기'):
+            del state['family_key']
+            st.rerun()
+        st.stop()
+    state.saved_snapshot = text
+    return True
+
+
+def saved_rerun():
+    if persist():
+        st.session_state.save_notice = '저장했어요.'
+    st.rerun()
+
+
+def open_family():
+    state = st.session_state
+    if 'family_key' in state:
+        return True
+    st.header('우리家 밸런스')
+    st.write('처음이라면 가족 저장 공간을 만들고, 다시 접속할 때는 가족 코드를 입력하세요.')
+    code = st.text_input('가족 코드', type='password', max_chars=150, placeholder='이전에 발급받은 코드')
+    create = st.button('새 가족 저장 공간 만들기', type='primary', use_container_width=True)
+    enter = st.button('저장한 가족 열기', use_container_width=True)
+    if not (create or enter):
+        return False
+    raw = secrets.token_urlsafe(24) if create else code.strip()
+    key = hashlib.sha256(raw.encode()).hexdigest()
+    try:
+        if create:
+            payload = {'data':state.get('data',empty_data()),'drafts':{},'ui':{'setup_done':state.get('setup_done',False)}}
+            rev = db_save(key,-1,payload)
+            state.new_family_code = raw
+        else:
+            row = db_load(key)
+            if not row:
+                st.error('가족 코드가 맞지 않아요. 발급받은 코드를 다시 확인해 주세요.')
+                return False
+            rev,payload = row
+    except (sqlite3.Error, ValueError):
+        st.error('저장 공간에 연결할 수 없어요. 잠시 뒤 다시 시도해 주세요.')
+        return False
+    for k in ('setup_done','tutorial_done','tutorial_step','main_menu','quest_step','reward_family','active_actor'):
+        state.pop(k,None)
+    state.update(payload['ui'])
+    state.data, state.drafts = payload['data'], payload['drafts']
+    state.family_key,state.revision = key,rev
+    state.saved_snapshot = json.dumps(payload,ensure_ascii=False,sort_keys=True)
+    st.rerun()
+
+
+def draft(widget, ident, *args, **kw):
+    state = st.session_state
+    ident = state.family_key[:12]+'_'+ident
+    supplied = kw.pop('key',None)
+    if supplied and not supplied.startswith('meal_date_'):
+        ident += '_'+supplied
+    key = 'draft_widget_'+ident
+    stored = state.drafts.get(ident)
+    if ident in state.drafts and key not in state:
+        if widget == 'date_input':
+            stored = date.fromisoformat(stored)
+        if widget in ('large_choice','visible_checks','pills'):
+            options = list(args[1])
+            if isinstance(stored,list):
+                stored = [v for v in stored if v in options]
+            elif stored not in options:
+                stored = args[1][kw.get('index',0)] if widget=='large_choice' else None
+        state[key] = stored
+    def changed():
+        value = state[key]
+        state.drafts[ident] = value.isoformat() if isinstance(value,date) else value
+    fn = globals()[widget] if widget in ('large_choice','visible_checks') else getattr(st,widget)
+    return fn(*args,key=key,on_change=changed,**kw)
+
+
+def tutorial():
+    steps = [('환영해요!', '집안일은 나누고, 식사는 함께하고, 건강도 챙겨요.'),
+             ('집안일 퀘스트','가족과 할 일을 등록해요. 완료 사진을 올리고 가족별 완료 수를 비교해 다음 일을 나눠요.'),
+             ('함께 식사','가능한 요일과 끼니를 골라요. 추천 시간에 메뉴를 정하고 함께한 식사를 기록해요.'),
+             ('부모님 건강','수면과 병원 일정을 기록해요. 일상 증상별 관리법도 확인할 수 있어요.')]
+    idx=st.session_state.get('tutorial_step',0)
+    st.caption(f'사용 안내 · {idx+1} / {len(steps)}')
+    st.progress((idx+1)/len(steps))
+    with st.container(border=True):
+        st.header(steps[idx][0]); st.write(steps[idx][1])
+    if idx and st.button('← 이전'):
+        st.session_state.tutorial_step=idx-1
+        saved_rerun()
+    if idx < len(steps)-1 and st.button('다음 →',type='primary'):
+        st.session_state.tutorial_step=idx+1
+        saved_rerun()
+    if st.button('시작하기' if idx==len(steps)-1 else '건너뛰기', type='primary' if idx==len(steps)-1 else 'secondary'):
+        st.session_state.tutorial_done=True
+        st.session_state.pop('tutorial_replay',None)
+        go_page('홈'); saved_rerun()
+
+
 def go_page(page):
     st.session_state.main_menu = page
 
@@ -36,13 +172,13 @@ def go_page(page):
 def large_choice(label, options, index=0, format_func=str, key=None, **kwargs):
     options = list(options)
     value = st.pills(label, options, selection_mode='single', default=options[index],
-                     format_func=format_func, key=key)
+                     format_func=format_func, key=key, **kwargs)
     return options[index] if value is None else value
 
 
 def visible_checks(label, options, default=None, format_func=str, key=None, **kwargs):
     return st.pills(label, list(options), selection_mode='multi', default=default or [],
-                    format_func=format_func, key=key) or []
+                    format_func=format_func, key=key, **kwargs) or []
 
 
 def today_kst():
@@ -240,7 +376,7 @@ def delete_record(d, key, labeler, widget_key):
         confirm = st.checkbox('선택한 기록을 삭제하겠습니다.', key=widget_key+'_confirm')
         if st.button('선택 기록 삭제', key=widget_key+'_button', disabled=not confirm):
             d[key].pop(index)
-            st.rerun()
+            saved_rerun()
 
 
 def add_family_member(d, name):
@@ -264,12 +400,12 @@ def settings(d):
         for member in d['members']:
             st.success('👤 '+member['이름'])
     st.subheader('가족 한 명 추가하기')
-    with st.form('custom_family', clear_on_submit=True):
-        name = st.text_input('이름 또는 가족 호칭', max_chars=20, placeholder='예: 나, 엄마, 아빠, 첫째 오빠')
-        if st.form_submit_button('입력한 가족 추가하기', use_container_width=True):
+    with st.container(border=True):
+        name = draft('text_input', 'settings_400', '이름 또는 가족 호칭', max_chars=20, placeholder='예: 나, 엄마, 아빠, 첫째 오빠')
+        if st.button('입력한 가족 추가하기', use_container_width=True):
             try:
                 add_family_member(d, name)
-                st.rerun()
+                saved_rerun()
             except ValueError as exc:
                 st.error(str(exc))
     if d['members']:
@@ -277,33 +413,37 @@ def settings(d):
             if st.button('등록 마치고 홈으로 →', type='primary', use_container_width=True):
                 st.session_state.setup_done = True
                 go_page('홈')
-                st.rerun()
+                saved_rerun()
         with st.expander('가족 호칭 수정'):
-            target = large_choice('수정할 가족', list(names(d)), format_func=names(d).get, key='edit_member')
+            target = draft('large_choice', 'settings_414', '수정할 가족', list(names(d)), format_func=names(d).get, key='edit_member')
             member = next(m for m in d['members'] if m['id']==target)
-            with st.form('member_edit_'+target):
-                new_name = st.text_input('가족 호칭', value=member['이름'], max_chars=20)
-                if st.form_submit_button('수정 내용 저장', use_container_width=True):
+            with st.container(border=True):
+                new_name = draft('text_input', 'settings_417' + target, '가족 호칭', value=member['이름'], max_chars=20)
+                if st.button('수정 내용 저장', use_container_width=True):
                     clean = new_name.strip()
                     if not clean or any(m['id']!=target and m['이름']==clean for m in d['members']):
                         st.error('중복되지 않는 가족 호칭을 입력해 주세요.')
                     else:
                         member['이름'] = clean
-                        st.rerun()
+                        saved_rerun()
     if st.session_state.get('setup_done'):
         with st.expander('함께 식사 목표 수정'):
-            with st.form('edit_meal_goal'):
-                goal = st.number_input('일주일에 함께 식사할 횟수', 1, 21, int(d['meal_goal']))
-                if st.form_submit_button('식사 목표 저장', use_container_width=True):
+            with st.container(border=True):
+                goal = draft('number_input', 'settings_428', '일주일에 함께 식사할 횟수', 1, 21, int(d['meal_goal']))
+                if st.button('식사 목표 저장', use_container_width=True):
                     d['meal_goal'] = int(goal)
                     st.success('식사 목표를 저장했어요.')
     with st.expander('전체 기록 초기화'):
         agreed = st.checkbox('사진과 미션금을 포함한 모든 기록 삭제에 동의합니다.', key='reset_consent')
         if st.button('전체 기록 초기화', disabled=not agreed, use_container_width=True):
             st.session_state.data = empty_data()
+            st.session_state.drafts = {}
+            for key in list(st.session_state):
+                if key.startswith('draft_widget_'):
+                    del st.session_state[key]
             st.session_state.setup_done = False
             go_page('가족 설정')
-            st.rerun()
+            saved_rerun()
 
 
 def prepare_photo(raw):
@@ -348,7 +488,7 @@ def quest_summary(d):
 
 def home(d):
     ready = bool(d['members']) and st.session_state.get('setup_done', False)
-    st.header('우리 가족의 하루')
+    st.markdown('<div class="home-intro"><h1>우리 가족의 하루</h1><p>집안일은 나누고, 식사는 함께, 건강도 챙겨요.</p></div>', unsafe_allow_html=True)
     if not ready:
         st.button('⚙️  1. 가족 먼저 등록하기 →', type='primary', use_container_width=True,
                   on_click=go_page, args=('가족 설정',))
@@ -393,23 +533,27 @@ def quests(d):
         for option in steps:
             st.button(option, key='quest_step_'+option, type='primary' if option == step else 'secondary',
                       on_click=st.session_state.update, args=({'quest_step': option},), use_container_width=True)
-    actor = st.session_state.get('quest_actor')
+    actor = st.session_state.get('active_actor')
     if actor not in n:
         actor = next(iter(n))
     if step != steps[2]:
-        actor = large_choice('등록하는 가족' if step == steps[0] else '미션을 볼 가족',
+        actor = draft('large_choice', 'quests_532', '등록하는 가족' if step == steps[0] else '미션을 볼 가족',
                              list(n), format_func=n.get, index=list(n).index(actor), key='quest_actor')
+        st.session_state.active_actor = actor
     if step == steps[0]:
         st.write('할 일, 맡을 가족, 미션금을 정해 주세요.')
-        with st.form('new_quest', clear_on_submit=True):
-            title = st.text_input('어떤 미션인가요?', max_chars=60, placeholder='예: 설거지하기')
+        with st.container(border=True):
+            title = draft('text_input', 'quests_537', '어떤 미션인가요?', max_chars=60, placeholder='예: 설거지하기')
             detail = ''
-            people = visible_checks('누가 할까요?', list(n), format_func=n.get)
-            reward = st.number_input('한 사람에게 줄 미션금(원)', 0, 1000000, 2000, 100)
+            people = draft('visible_checks', 'quests_539', '누가 할까요?', list(n), format_func=n.get)
+            reward = draft('number_input', 'quests_540', '한 사람에게 줄 미션금(원)', 0, 1000000, 2000, 100)
             consent = st.checkbox('안전과 미션금을 가족과 합의했습니다.')
-            if st.form_submit_button('미션 등록하기', use_container_width=True):
+            if st.button('미션 등록하기', use_container_width=True):
                 if not title.strip() or not people or not consent:
-                    st.error('할 일과 담당자를 입력하고 합의를 확인해 주세요.')
+                    
+                    if not title.strip(): st.error('할 일: 미션 이름을 적어 주세요.')
+                    if not people: st.error('담당자: 맡을 가족을 한 명 이상 골라 주세요.')
+                    if not consent: st.error('가족과 정한 안전·미션금을 확인해 주세요.')
                 else:
                     group_id = uid()
                     for person in people:
@@ -418,7 +562,7 @@ def quests(d):
                                             '상태': '진행 중', '사진': None, '완료일': None, '지급일': None})
                     st.session_state.quest_step = steps[1]
                     st.session_state.quest_notice = '미션을 등록했어요! 담당 가족은 할 일을 마친 뒤 사진을 올리세요.'
-                    st.rerun()
+                    saved_rerun()
     elif step == steps[1]:
         groups = group_missions(d['quests'])
         visible = [group for group in groups if any(actor in [q['담당'], q['등록자']] for q in group)]
@@ -449,7 +593,7 @@ def quests(d):
                 st.write('완료한 가족: '+(' · '.join(completed) if completed else '아직 없어요'))
                 st.divider()
                 st.write('**📷 완료 사진·진행 상태**')
-                selected = large_choice('사진을 제출하거나 확인할 가족',
+                selected = draft('large_choice', 'quests_584' + first['id'], '사진을 제출하거나 확인할 가족',
                     [q['담당'] for q in group], format_func=n.get, key='submitter_'+first['id'])
                 q = next(item for item in group if item['담당']==selected)
                 if q['상태'] in ('지급 대기','지급 완료'):
@@ -458,28 +602,52 @@ def quests(d):
                 if q.get('사진'):
                     st.image(base64.b64decode(q['사진']), caption=n[selected]+'의 완료 사진', use_container_width=True)
                 if q['상태']=='진행 중':
-                    photo = st.file_uploader('완료 사진 선택하기', type=['jpg','jpeg','png','webp'], key='photo_'+q['id'])
-                    st.caption('얼굴·주소가 없는 완료 사진을 올려 주세요.')
-                    if st.button('📷 사진 제출하고 미션 완료!', key='finish_'+q['id'], disabled=photo is None, use_container_width=True):
+                    photo_key = 'mission_photo_'+q['id']
+                    upload_key = 'photo_'+q['id']
+                    def keep_photo(upload_key=upload_key, photo_key=photo_key):
+                        photo = st.session_state.get(upload_key)
+                        if photo is None:
+                            st.session_state.drafts.pop(photo_key,None)
+                            return
                         try:
                             encoded = prepare_photo(photo.getvalue())
+                            st.session_state.drafts[photo_key] = encoded
+                        except ValueError as exc:
+                            st.session_state.photo_error = str(exc)
+                    st.file_uploader('완료 사진 선택하기', type=['jpg','jpeg','png','webp'], key=upload_key, on_change=keep_photo)
+                    if st.session_state.get('photo_error'):
+                        st.error(st.session_state.pop('photo_error'))
+                    encoded = st.session_state.drafts.get(photo_key)
+                    if encoded:
+                        st.caption('완료 사진이 임시 저장됐어요.')
+                        if st.button('임시 사진 지우기',key='drop_'+q['id']):
+                            st.session_state.drafts.pop(photo_key,None)
+                            saved_rerun()
+                    if st.button('📷 사진 제출하고 미션 완료!', key='finish_'+q['id'], disabled=not encoded, use_container_width=True):
+                        try:
                             if sum(len(x.get('사진') or '') for x in d['quests'])+len(encoded)>15*1024*1024:
                                 raise ValueError('사진 보관 한도에 도달했습니다.')
                             q['사진'] = encoded
                             transition_quest(q, '사진으로 미션 완료', selected)
+                            st.session_state.drafts.pop(photo_key,None)
                             st.session_state.reward_family = selected
+                            st.session_state.quest_step = steps[2]
+                            for dk in list(st.session_state.drafts):
+                                if dk.endswith('_reward_family'):
+                                    st.session_state.drafts.pop(dk)
+                                    st.session_state.pop('draft_widget_'+dk,None)
                             total = sum(item['용돈'] for item in d['quests'] if item['담당']==selected and item['상태'] in ('지급 대기','지급 완료'))
                             st.session_state.quest_notice = f"{n[selected]}님 미션 성공! +{q['용돈']:,}원 적립 🎉 총 {total:,}원을 모았어요."
-                            st.rerun()
+                            saved_rerun()
                         except ValueError as exc:
                             st.error(str(exc))
                 if actor==q['등록자'] and q['상태']=='지급 대기':
                     paid = st.checkbox('실제로 미션금을 주었습니다.', key='paid_'+q['id'])
                     if st.button('미션금 지급 완료', key='pay_'+q['id'], disabled=not paid, use_container_width=True):
                         transition_quest(q, '지급 완료', actor)
-                        st.rerun()
+                        saved_rerun()
     else:
-        reward_who = large_choice('수령금 확인할 가족', list(n), format_func=n.get, index=list(n).index(actor), key='reward_family')
+        reward_who = draft('large_choice', 'quests_614', '수령금 확인할 가족', list(n), format_func=n.get, index=list(n).index(st.session_state.get('reward_family') if st.session_state.get('reward_family') in n else actor), key='reward_family')
         own = next(row for row in quest_summary(d) if row['구성원']==n[reward_who])
         earned = own['받을 미션금(원)'] + own['받은 미션금(원)']
         st.metric(n[reward_who]+'님의 미션 수령금', f'{earned:,}원')
@@ -529,12 +697,12 @@ def meals(d):
     tab1, tab2 = st.tabs(['가능 시간 찾기', '식사 기록·분석'])
     with tab1:
         st.subheader('한 번에 식사 시간 정하기')
-        with st.form('family_availability_quick_v2'):
-            people = st.pills('참여할 가족', list(n), format_func=n.get,
+        with st.container(border=True):
+            people = draft('pills', 'meals_665', '참여할 가족', list(n), format_func=n.get,
                               selection_mode='multi', default=list(n)) or []
-            day_name = st.pills('요일 하나 선택', DAYS, selection_mode='single', default='화')
-            slots = st.pills('그날 가능한 끼니', SLOTS, selection_mode='multi', default=[]) or []
-            if st.form_submit_button('이 일정 추가',use_container_width=True):
+            day_name = draft('pills', 'meals_667', '요일 하나 선택', DAYS, selection_mode='single', default='화')
+            slots = draft('pills', 'meals_668', '그날 가능한 끼니', SLOTS, selection_mode='multi', default=[]) or []
+            if st.button('이 일정 추가',use_container_width=True):
                 if not people or day_name not in DAYS or not slots:
                     st.error('가족·요일·끼니를 선택해 주세요.')
                 else:
@@ -548,7 +716,7 @@ def meals(d):
                                 existing.add(item)
                                 added += 1
                     st.session_state['meal_schedule_notice'] = '일정을 추가했어요.' if added else '이미 등록된 일정이에요.'
-                    st.rerun()
+                    saved_rerun()
         notice = st.session_state.pop('meal_schedule_notice',None)
         if notice:
             st.success(notice)
@@ -563,18 +731,18 @@ def meals(d):
         else:
             st.write('가족 두 명 이상이 가능한 끼니를 등록하면 함께 먹기 좋은 시간을 추천해요.')
     with tab2:
-        with st.form('meal_add', clear_on_submit=True):
-            day = st.date_input('식사한 날짜', value=today_kst(), max_value=today_kst(), key='meal_date_'+today_kst().isoformat())
-            slot = large_choice('함께한 끼니', SLOTS)
-            people = visible_checks('참여한 가족', list(n), format_func=n.get)
-            if st.form_submit_button('식사 기록 저장'):
+        with st.container(border=True):
+            day = draft('date_input', 'meals_699', '식사한 날짜', value=today_kst(), max_value=today_kst(), key='meal_date_'+today_kst().isoformat())
+            slot = draft('large_choice', 'meals_700', '함께한 끼니', SLOTS)
+            people = draft('visible_checks', 'meals_701', '참여한 가족', list(n), format_func=n.get)
+            if st.button('식사 기록 저장'):
                 if len(people) < 2:
                     st.error('가족 2명 이상을 선택해 주세요.')
                 elif any(r['날짜'] == str(day) and r['끼니'] == slot for r in d['meals']):
                     st.error('이미 기록된 끼니입니다. 아래 기록을 삭제하고 다시 입력하세요.')
                 else:
                     d['meals'].append({'id': uid(), '날짜': str(day), '끼니': slot, '참여': people})
-                    st.rerun()
+                    saved_rerun()
         records = weekly_meals(d)
         st.metric('이번 주 함께한 식사', f'{len(records)}회', f'목표까지 {max(0, goal-len(records))}회 남음', delta_color='off')
         st.progress(min(1.0, len(records)/goal))
@@ -662,12 +830,12 @@ def health(d):
     st.subheader('어디가 불편하세요?')
     short_labels = dict(zip(DAILY_DETAILS,
         ['눈 피로', '목·어깨', '허리', '두통', '어지럼', '더부룩함', '배변 불편', '코·목', '수면', '피로']))
-    symptoms = visible_checks('증상을 눌러 주세요', list(DAILY_DETAILS),
+    symptoms = draft('visible_checks', 'health_797', '증상을 눌러 주세요', list(DAILY_DETAILS),
                               format_func=short_labels.get, key='daily_symptoms')
     st.divider()
     st.caption('심한 흉통·숨참, 갑작스러운 마비·말 이상, 의식 저하는 즉시 119')
     with st.expander('응급 신호 확인'):
-        urgent_symptoms = visible_checks('해당하는 증상',
+        urgent_symptoms = draft('visible_checks', 'health_802', '해당하는 증상',
             ['흉통 또는 심한 호흡곤란', '갑작스러운 마비 또는 언어 장애', '의식 저하 또는 실신'], key='urgent_symptoms')
         for symptom in urgent_symptoms:
             st.error('지금 증상이 있으면 즉시 119에 연락하세요. 직접 운전하지 마세요.')
@@ -700,18 +868,36 @@ def health(d):
     if not require_family(d):
         return
     n = names(d)
-    who = large_choice('건강을 살펴볼 가족', list(n), format_func=n.get)
+    who = draft('large_choice', 'health_835', '건강을 살펴볼 가족', list(n), format_func=n.get)
     member = next(m for m in d['members'] if m['id'] == who)
-    with st.form('health_add_'+who, clear_on_submit=True):
-        day = st.date_input('기록 날짜', max_value=today_kst())
-        minutes = st.select_slider('수면 시간', options=list(range(0, 1441, 10)), value=420, format_func=sleep_label)
+    with st.container(border=True):
+        day = draft('date_input', 'health_838' + who, '기록 날짜', max_value=today_kst())
+        minutes = draft('select_slider', 'health_839' + who, '수면 시간', options=list(range(0, 1441, 10)), value=420, format_func=sleep_label)
         sleep = minutes / 60
-        if st.form_submit_button('건강 기록 저장', use_container_width=True):
+        if st.button('건강 기록 저장', use_container_width=True):
             d['health'] = [r for r in d['health'] if not (r['구성원'] == who and r['날짜'] == str(day))]
             d['health'].append({'id': uid(), '구성원': who, '날짜': str(day),
                                 '걸음': 0, '수면': sleep, '수축기': None, '이완기': None, '메모': ''})
-            st.rerun()
-    period = large_choice('분석 기간', [7, 14, 30], format_func=lambda x: f'최근 {x}일')
+            saved_rerun()
+    with st.expander('병원 방문 일정'):
+        records_visit = d.setdefault('visits', [])
+        editing = draft('large_choice','visit_edit_'+who,'일정 선택', ['새 일정']+[v['id'] for v in records_visit if v['member']==who], format_func=lambda x: next((v['day']+' · '+v['place'] for v in records_visit if v['id']==x),x))
+        old = next((v for v in records_visit if v['id']==editing),None)
+        day_visit = draft('date_input','visit_day_'+who+editing,'방문 날짜',value=date.fromisoformat(old['day']) if old else today_kst())
+        place = draft('text_input','visit_place_'+who+editing,'병원 또는 진료과',value=old['place'] if old else '',placeholder='예: 가까운 내과',max_chars=80)
+        if st.button('병원 일정 저장'):
+            if not place.strip(): st.error('병원 이름이나 진료과를 적어 주세요.')
+            else:
+                if not old:
+                    old = {'id':uid(),'member':who}
+                    records_visit.append(old)
+                old.update(day=day_visit.isoformat(),place=place.strip())
+                saved_rerun()
+        if old and st.checkbox('이 병원 일정을 삭제할게요.',key='confirm_visit'+editing):
+            if st.button('병원 일정 삭제',key='delete_visit'+editing):
+                records_visit.remove(old)
+                saved_rerun()
+    period = draft('large_choice', 'health_846', '분석 기간', [7, 14, 30], format_func=lambda x: f'최근 {x}일')
     start = today_kst() - timedelta(days=period-1)
     records = sorted([r for r in d['health'] if r['구성원'] == who and start <= date.fromisoformat(r['날짜']) <= today_kst()], key=lambda r: r['날짜'])
     if not records:
@@ -870,23 +1056,33 @@ def main():
     .st-key-home_settings {max-width:10rem;margin-top:12px;margin-left:auto;}
     .st-key-quest_steps button[data-testid="stBaseButton-secondary"] {background:#fff!important;border:1px solid #8fb4d1!important;}
     .st-key-quest_steps button[data-testid="stBaseButton-secondary"] p {color:#173b5d!important;}
+    .stApp,.stApp button,.stApp input {font-family:'NanumSquareRound','Apple SD Gothic Neo','Malgun Gothic',sans-serif;}
+    .st-key-feature_grid [data-testid="stHorizontalBlock"] {gap:12px!important;}
+    .st-key-feature_grid .stButton button {min-height:124px;border-radius:20px!important;box-shadow:0 4px 12px #17487515!important;}
+    .st-key-feature_grid .stButton button:disabled {opacity:.68!important;}
+    @media(max-width:360px) {.st-key-feature_grid [data-testid="stHorizontalBlock"] {gap:5px!important;}}
     </style>''', unsafe_allow_html=True)
-    if 'data' not in st.session_state:
-        st.session_state.data = empty_data()
-    if not st.session_state.get('splash_seen', False):
-        splash = st.empty()
-        splash.markdown(f'<div role="status" aria-label="우리家 밸런스 시작 화면" style="position:fixed;inset:0;z-index:999999;background:linear-gradient(155deg,#c5e8ff,#f6fbff);display:flex;align-items:center;justify-content:center;height:100dvh;width:100vw;"><img alt="우리家 밸런스 로고" src="data:image/png;base64,{APP_ICON}" style="display:block;width:clamp(220px,64vw,340px);max-width:80vw;height:auto;aspect-ratio:1;border-radius:22%;object-fit:contain;"></div>', unsafe_allow_html=True)
+    if not st.session_state.get('splash_seen'):
+        logo = st.empty()
+        logo.markdown(f'<div style="position:fixed;inset:0;z-index:99999;background:#d5ebff;display:grid;place-items:center"><img alt="우리家 밸런스" style="width:min(64vw,290px);border-radius:22%" src="data:image/png;base64,{APP_ICON}"></div>',unsafe_allow_html=True)
         time.sleep(2)
-        st.session_state.splash_seen = True
-        splash.empty()
-    if not st.session_state.get('started', False):
-        with st.container(key='welcome_art'):
-            st.markdown(f'<div class="welcome-hero"><img src="data:image/png;base64,{APP_ICON}" alt=""><h1>우리家 밸런스</h1><p>함께 나누면, 우리 가족이 더 행복해져요.</p></div>', unsafe_allow_html=True)
-            st.write('집안일을 나누고, 함께 식사하고, 건강도 챙겨요.')
-            if st.button('시작하기', use_container_width=True, type='primary'):
-                st.session_state.started = True
-                go_page('홈')
-                st.rerun()
+        logo.empty()
+        st.session_state.splash_seen=True
+    if not open_family():
+        return
+    if persist():
+        st.caption('자동 저장됨')
+    notice = st.session_state.pop('save_notice',None)
+    if notice:
+        st.toast(notice)
+    if st.session_state.get('new_family_code'):
+        st.warning('다시 접속할 때 필요한 가족 코드예요. 비밀번호처럼 안전하게 보관하세요.')
+        st.code(st.session_state.new_family_code)
+        if st.button('코드 보관했어요'):
+            del st.session_state['new_family_code']; st.rerun()
+        return
+    if not st.session_state.get('tutorial_done') or st.session_state.get('tutorial_replay'):
+        tutorial()
         return
     page = st.session_state.get('main_menu', '홈')
     st.markdown(f'<div class="app-masthead"><img src="data:image/png;base64,{APP_ICON}" alt=""><strong>우리家 밸런스</strong></div>', unsafe_allow_html=True)
@@ -895,7 +1091,11 @@ def main():
     {'홈': home, '집안일 퀘스트': quests, '함께 식사': meals,
      '부모님 건강': health, '가족 설정': settings}[page](st.session_state.data)
     if page == '가족 설정':
-        st.caption('기록은 현재 접속 중에만 보관됩니다.')
+        if st.button('사용 안내 다시 보기'):
+            st.session_state.tutorial_replay=True
+            st.session_state.tutorial_step=0
+            saved_rerun()
+    persist()
 
 
 if __name__ == '__main__':
