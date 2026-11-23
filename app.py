@@ -558,9 +558,15 @@ def celebrate(d):
     if prefs.get('sound',False): st.audio(celebration_audio(),format='audio/wav',autoplay=True)
 
 
+def mission_is_done(group, actor):
+    own = next((q for q in group if q['담당'] == actor), None)
+    return own['상태'] in COMPLETED if own else all(q['상태'] in COMPLETED for q in group)
+
+
 def go_mission(q):
     st.session_state.active_actor=q['담당']
     st.session_state.quest_focus=q['id']
+    st.session_state.mission_filter='진행 중'
     for k in list(st.session_state.drafts):
         if k.endswith('_quest_actor') or '_submitter_' in k:
             st.session_state.drafts.pop(k)
@@ -784,11 +790,24 @@ def quests(d):
         visible = [group for group in groups if any(actor in [q['담당'], q['등록자']] for q in group)]
         if not visible:
             st.write('이 가족이 맡거나 등록한 미션이 없어요. 다른 가족을 선택하거나 ①에서 미션을 만들 수 있어요.')
-        focus=st.session_state.pop('quest_focus',None)
-        for group in sorted(reversed(visible),key=lambda group:not any(q['id']==focus for q in group)):
+        focus = st.session_state.pop('quest_focus', None)
+        done = [g for g in visible if mission_is_done(g, actor)]
+        pending = [g for g in visible if not mission_is_done(g, actor)]
+        current = st.session_state.get('mission_filter', '진행 중')
+        if visible:
+            left, right = st.columns(2)
+            for col, label, groups_for_label in [(left, '진행 중', pending), (right, '완료한 미션', done)]:
+                with col:
+                    st.button(f'{label} {len(groups_for_label)}개', key='mission_filter_'+label,
+                              type='primary' if current == label else 'secondary', use_container_width=True,
+                              on_click=st.session_state.update, args=({'mission_filter': label},))
+        shown = done if current == '완료한 미션' else pending
+        if visible and not shown:
+            st.write('아직 완료한 미션이 없어요.' if current == '완료한 미션' else '진행 중인 미션이 없어요.')
+        for group in sorted(reversed(shown), key=lambda group: not any(q['id'] == focus for q in group)):
             first = group[0]
-            my_record = next((item for item in group if item['담당']==actor), None)
-            card_done = (my_record is not None and my_record['상태'] in ('지급 대기','지급 완료')) or all(item['상태'] in ('지급 대기','지급 완료') for item in group)
+            my_record = next((item for item in group if item['담당'] == actor), None)
+            card_done = mission_is_done(group, actor)
             with st.container(border=True):
                 if card_done:
                     st.markdown('<span class="completed-mission-marker"></span>', unsafe_allow_html=True)
@@ -816,8 +835,8 @@ def quests(d):
                 if q['상태'] in ('지급 대기','지급 완료'):
                     st.success('✓ '+n[selected]+'님 완료 · 미션금 적립됨')
 
-                if q.get('사진'):
-                    st.image(base64.b64decode(q['사진']), caption=n[selected]+'의 완료 사진', use_container_width=True)
+                if q.get('사진') and st.toggle('완료 사진 보기', key='view_photo_'+q['id']):
+                    st.image(base64.b64decode(q['사진']), caption=n[selected]+'의 완료 사진', width=320)
                 if q['상태']=='진행 중':
                     photo_key = 'mission_photo_'+q['id']
                     upload_key = 'photo_'+q['id']
