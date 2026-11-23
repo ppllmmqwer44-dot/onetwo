@@ -494,9 +494,20 @@ def quest_summary(d):
 
 
 COINS_PER_MISSION = 10
-REWARD_DEFAULTS = [dict(id='dinner',name='가족이 원하는 메뉴로 저녁 먹기',cost=40),
-                   dict(id='movie',name='주말 영화 선택권',cost=30),
-                   dict(id='chore',name='집안일 하루 면제권',cost=50)]
+REWARD_DEFAULTS = [dict(id='allowance_2000', name='용돈 2,000원', cost=40)]
+
+
+def reward_products(d):
+    products = d.get('rewards', REWARD_DEFAULTS)
+    if any(r['id'] == 'allowance_2000' for r in products):
+        return products
+    return [*REWARD_DEFAULTS, *products]
+
+
+def member_rewards(d, member):
+    return [r for r in reversed(d.get('coin_spends', [])) if r.get('member') == member]
+
+
 COMPLETED = ('지급 대기','지급 완료')
 
 
@@ -515,17 +526,19 @@ def coin_state(d):
     return earned, earned-sum(r['coins'] for r in spends), sorted(credits.values(),key=lambda r:r['at'],reverse=True)
 
 
-def buy_reward(d, reward_id, operation):
+def buy_reward(d, reward_id, operation, member):
+    if member not in names(d):
+        raise ValueError('보상을 받을 가족을 선택해 주세요.')
     entries=d.setdefault('coin_spends',[])
     if any(r['id']==operation for r in entries):
         return False
-    product=next((r for r in d.get('rewards',REWARD_DEFAULTS) if r['id']==reward_id),None)
+    product=next((r for r in reward_products(d) if r['id']==reward_id),None)
     if not product:
         raise ValueError('선택한 보상을 찾을 수 없어요.')
     balance=coin_state(d)[1]
     if balance<product['cost']:
         raise ValueError(f"코인이 {product['cost']-balance:,}개 부족해요.")
-    entries.append(dict(id=operation,name=product['name'],coins=product['cost'],at=now_kst()))
+    entries.append(dict(id=operation,name=product['name'],coins=product['cost'],at=now_kst(),member=member))
     return True
 
 
@@ -680,7 +693,18 @@ def wallet(d):
         st.metric('가족이 사용할 수 있는 코인',f'{balance:,}개')
         st.caption(f'누적 적립 {earned:,}개 · 사용 {earned-balance:,}개')
     overview,history,shop=st.tabs(['가족 현황','적립·사용 내역','보상 상점'])
+    buyer = st.selectbox('누구의 보상을 볼까요?', list(n), format_func=n.get,
+                         index=None, placeholder='가족을 선택해 주세요', key='wallet_reward_member') if n else None
     with overview:
+        st.subheader('내가 얻은 보상')
+        if buyer is None:
+            st.caption('위에서 가족을 선택하면 받은 보상을 볼 수 있어요.')
+        else:
+            received = member_rewards(d, buyer)
+            if not received:
+                st.caption('아직 받은 보상이 없어요.')
+            for row in received:
+                st.write(f"**{row['name']}** · {row['coins']:,}코인 · {row['at'][:10]}")
         st.subheader('함께 모은 코인')
         st.caption('개인별 적립 기록이에요. 보상은 가족 공동 지갑에서 사용해요.')
         if n:
@@ -702,15 +726,17 @@ def wallet(d):
                 st.write(f"**{r['name']} · {prefix}{r['coins']:,} 코인**")
                 st.caption(when+(' · '+n.get(r['member'],'가족') if 'member' in r else ''))
     with shop:
-        for product in d.get('rewards',REWARD_DEFAULTS):
+        if buyer is None:
+            st.caption('위에서 보상을 받을 가족을 선택해 주세요.')
+        for product in reward_products(d):
             with st.container(border=True):
                 st.write(f"**{product['name']} · 🪙 {product['cost']:,}**")
                 missing=product['cost']-balance
                 if missing>0: st.caption(f'{missing:,}코인이 더 필요해요.')
-                elif st.checkbox('이 보상에 코인을 사용할게요.',key='buy_confirm_'+product['id']):
+                elif buyer is not None and st.checkbox(f'{n[buyer]}님 보상에 코인을 사용할게요.',key='buy_confirm_'+product['id']):
                     if st.button('보상 받기',key='buy_'+product['id']):
                         try:
-                            buy_reward(d,product['id'],uid()); st.session_state.save_notice='보상을 받았어요!'
+                            buy_reward(d,product['id'],uid(),buyer); st.session_state.save_notice='보상을 받았어요!'
                             persist(); st.rerun()
                         except ValueError as exc: st.error(str(exc))
         with st.expander('관리자 · 상품과 가격 수정'):
@@ -723,7 +749,7 @@ def shop_admin(d):
         st.caption('배포 설정에 관리자 비밀번호(BALANCE_ADMIN_PIN)를 지정하면 상품을 관리할 수 있어요.');return
     pin=st.text_input('관리자 비밀번호',type='password',key='shop_admin_pin')
     if not secrets.compare_digest(pin.encode(),expected.encode()): return
-    products=d.get('rewards',REWARD_DEFAULTS)
+    products=reward_products(d)
     choice=draft('large_choice','shop_product','상품 선택',['새 상품']+[r['id'] for r in products],format_func=lambda x: next((r['name'] for r in products if r['id']==x),x))
     old=next((r for r in products if r['id']==choice),None)
     label=draft('text_input','shop_name_'+choice,'보상 이름',value=old['name'] if old else '',max_chars=60)
