@@ -658,28 +658,38 @@ def home(d):
     st.button('⚙️ 설정',on_click=go_page,args=('가족 설정',))
 
 
-def show_agenda(d,compact=False):
-    n=names(d); today=str(today_kst())
-    lines=[]
-    for r in sorted(d.get('events',[]),key=lambda r:r['day']):
-        if r['day']>=today: lines.append((r['day'],'📅 '+r['name']))
-    for r in d.get('visits',[]):
-        if r['day']>=today: lines.append((r['day'],'🏥 '+n.get(r['member'],'가족')+' · '+r['place']))
-    for slot in meal_candidates(d):
-        if slot['요일']==DAYS[today_kst().weekday()]: lines.append((today,'🍚 식사 가능 · '+slot['끼니']))
-    for q in d['quests']:
-        if q['상태']=='진행 중': lines.append((today,'🎯 예정 집안일 · '+n[q['담당']]+' · '+q['제목']))
+def upcoming_family_events(d, today):
+    return sorted((event for event in d.get('events', []) if event['day'] >= today),
+                  key=lambda event: event['day'])
+
+
+def show_agenda(d, compact=False):
+    today = today_kst().isoformat()
+    events = upcoming_family_events(d, today)
+    if compact:
+        events = events[:5]
     with st.container(border=True):
-        if not lines: st.write('다가오는 일정이 없어요.')
-        for day,name in sorted(lines)[:5 if compact else None]:
-            st.write(('오늘' if day==today else day)+' · '+name)
+        if not events:
+            st.caption('다가오는 가족 일정이 없어요.')
+        last_day = None
+        for event in events:
+            day = event['day']
+            if day != last_day:
+                parsed = date.fromisoformat(day)
+                label = f'{parsed.month}월 {parsed.day}일 ({DAYS[parsed.weekday()]})'
+                st.markdown('**' + ('오늘 · ' if day == today else '') + label + '**')
+                last_day = day
+            st.text('• ' + event['name'])
 
 
 def agenda(d):
-    st.header('📅 가족 일정'); show_agenda(d)
+    st.header('📅 가족 공동 캘린더')
+    st.subheader('다가오는 가족 일정')
+    show_agenda(d)
+    st.subheader('일정 추가·수정')
     events=d.setdefault('events',[])
     options=['새 일정']+[e['id'] for e in events]
-    chosen=draft('large_choice','agenda_edit','등록 또는 수정',options,format_func=lambda x: next((e['name'] for e in events if e['id']==x),x))
+    chosen=draft('selectbox','agenda_edit_calendar','일정 선택',options,format_func=lambda x: next((e['day']+' · '+e['name'] for e in events if e['id']==x),x))
     old=next((e for e in events if e['id']==chosen),None)
     label=draft('text_input','agenda_name_'+chosen,'일정 이름',value=old['name'] if old else '',placeholder='예: 가족 저녁 식사',max_chars=70)
     day=draft('date_input','agenda_day_'+chosen,'날짜',value=date.fromisoformat(old['day']) if old else today_kst())
