@@ -573,6 +573,8 @@ def personal_missions(groups, actor):
 def go_mission(q):
     st.session_state.active_actor=q['담당']
     st.session_state.quest_focus=q['id']
+    actor_key = st.session_state.family_key[:12] + '_quests_532_quest_actor'
+    st.session_state.pop('draft_widget_' + actor_key, None)
     st.session_state.mission_filter='진행 중'
     for k in list(st.session_state.drafts):
         if k.endswith('_quest_actor') or '_submitter_' in k:
@@ -811,7 +813,7 @@ def quests(d):
             count = sum(item['상태'] in COMPLETED for item in group)
             icon = '✓' if card_done else '🎯'
             coins = q.get('코인', COINS_PER_MISSION)
-            with st.expander(f"{icon} {q['제목']} · {coins:,}코인 · {count}/{len(group)}명 완료", expanded=q['id'] == focus):
+            with st.expander(f"{icon} {q['제목']} · {coins:,}코인 · {count}/{len(group)}명 완료" + (" · 사진 제출" if not card_done else ""), expanded=q['id'] == focus):
                 st.caption('등록: '+ n.get(q['등록자'], '알 수 없음') + ' / 담당: ' + ' · '.join(
                     ('✓ ' if item['상태'] in COMPLETED else '') + n.get(item['담당'], '알 수 없음') for item in group))
                 if q.get('설명'):
@@ -871,6 +873,9 @@ def quests(d):
                     count = sum(item['상태'] in COMPLETED for item in group)
                     st.write(f"{group[0]['제목']} · {count}/{len(group)}명 완료")
                     for item in group:
+                        if item['상태'] == '진행 중' and item['담당'] in n:
+                            st.button(f"📷 {n[item['담당']]}님으로 사진 제출",
+                                      key='registered_submit_'+item['id'], on_click=go_mission, args=(item,))
                         if item.get('사진') and item['상태'] in COMPLETED:
                             member = n.get(item['담당'], '알 수 없음')
                             if st.toggle(f'{member} 완료 사진 보기', key='registered_photo_'+item['id']):
