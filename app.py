@@ -433,6 +433,12 @@ def settings(d):
                 if st.button('식사 목표 저장', use_container_width=True):
                     d['meal_goal'] = int(goal)
                     st.success('식사 목표를 저장했어요.')
+    if st.session_state.get('setup_done'):
+        with st.expander('미션 축하 설정'):
+            prefs=d.get('game_preferences',{})
+            sound=st.toggle('효과음',value=prefs.get('sound',False),key='game_sound')
+            motion=st.toggle('축하 애니메이션',value=prefs.get('motion',True),key='game_motion')
+            d['game_preferences']={'sound':sound,'motion':motion}
     with st.expander('전체 기록 초기화'):
         agreed = st.checkbox('사진과 미션금을 포함한 모든 기록 삭제에 동의합니다.', key='reset_consent')
         if st.button('전체 기록 초기화', disabled=not agreed, use_container_width=True):
@@ -486,25 +492,230 @@ def quest_summary(d):
             for m in d['members']]
 
 
+COINS_PER_MISSION = 10
+REWARD_DEFAULTS = [dict(id='dinner',name='가족이 원하는 메뉴로 저녁 먹기',cost=40),
+                   dict(id='movie',name='주말 영화 선택권',cost=30),
+                   dict(id='chore',name='집안일 하루 면제권',cost=50)]
+COMPLETED = ('지급 대기','지급 완료')
+
+
+def now_kst():
+    return datetime.now(ZoneInfo('Asia/Seoul')).isoformat(timespec='seconds')
+
+
+def coin_state(d):
+    credits = {}
+    for q in d['quests']:
+        if q['상태'] in COMPLETED:
+            credits.setdefault(q['id'],dict(id=q['id'],name=q['제목'],member=q['담당'],
+                coins=q.get('코인',COINS_PER_MISSION),at=q.get('완료시각') or q.get('완료일') or ''))
+    spends = d.get('coin_spends',[])
+    earned = sum(r['coins'] for r in credits.values())
+    return earned, earned-sum(r['coins'] for r in spends), sorted(credits.values(),key=lambda r:r['at'],reverse=True)
+
+
+def buy_reward(d, reward_id, operation):
+    entries=d.setdefault('coin_spends',[])
+    if any(r['id']==operation for r in entries):
+        return False
+    product=next((r for r in d.get('rewards',REWARD_DEFAULTS) if r['id']==reward_id),None)
+    if not product:
+        raise ValueError('선택한 보상을 찾을 수 없어요.')
+    balance=coin_state(d)[1]
+    if balance<product['cost']:
+        raise ValueError(f"코인이 {product['cost']-balance:,}개 부족해요.")
+    entries.append(dict(id=operation,name=product['name'],coins=product['cost'],at=now_kst()))
+    return True
+
+
+def level_info(d):
+    count=len(coin_state(d)[2]); return 1+count//5, count, 5-count%5
+
+
+def celebration_audio():
+    import wave, struct
+    stream=io.BytesIO()
+    with wave.open(stream,'wb') as f:
+        f.setparams((1,2,16000,0,'NONE','not compressed'))
+        frames=[]
+        for hz in (523.25,659.25,783.99):
+            for i in range(2400):
+                envelope=min(i/180,1)*max(0,1-i/2400)
+                frames.append(struct.pack('<h',int(2200*envelope*math.sin(2*math.pi*hz*i/16000))))
+        f.writeframes(b''.join(frames))
+    return stream.getvalue()
+
+
+def celebrate(d):
+    event=st.session_state.pop('coin_celebration',None)
+    if not event: return
+    prefs=d.get('game_preferences',{})
+    effect=bool(prefs.get('motion',True))
+    klass='coin-celebrate motion' if effect else 'coin-celebrate'
+    st.markdown(f'<div class="{klass}" role="status"><span>🪙 +{event[0]:,}</span><p>미션 성공! 가족을 위한 소중한 실천이에요.</p></div>',unsafe_allow_html=True)
+    if event[1]: st.success(f'함께 성장했어요! 가족 레벨 {event[1]} 🎉')
+    if effect: st.balloons()
+    if prefs.get('sound',False): st.audio(celebration_audio(),format='audio/wav',autoplay=True)
+
+
+def go_mission(q):
+    st.session_state.active_actor=q['담당']
+    st.session_state.quest_focus=q['id']
+    for k in list(st.session_state.drafts):
+        if k.endswith('_quest_actor') or '_submitter_' in k:
+            st.session_state.drafts.pop(k)
+            st.session_state.pop('draft_widget_'+k,None)
+    st.session_state.quest_step='② 미션 완료하기'
+    go_page('집안일 퀘스트')
+
+
 def home(d):
-    ready = bool(d['members']) and st.session_state.get('setup_done', False)
-    st.markdown('<div class="home-intro"><h1>우리 가족의 하루</h1><p>집안일은 나누고, 식사는 함께, 건강도 챙겨요.</p></div>', unsafe_allow_html=True)
+    ready=bool(d['members']) and st.session_state.get('setup_done',False)
+    earned,balance,credits=coin_state(d)
+    level,count,_=level_info(d)
+    n=names(d)
+    st.markdown('<div class="home-intro"><h1>우리家 밸런스</h1><p>작은 실천이 모여 우리 집을 바꿔요!</p></div>',unsafe_allow_html=True)
+    st.write(f'🏡 **가족 레벨 {level}**　·　🪙 **{balance:,} 코인**')
+    import html
+    if n:
+        st.markdown('<div class="family-faces">'+''.join(f'<div><b>{html.escape(name[:1])}</b><span>{html.escape(name)}</span></div>' for name in n.values())+'</div>',unsafe_allow_html=True)
     if not ready:
-        st.button('⚙️  1. 가족 먼저 등록하기 →', type='primary', use_container_width=True,
-                  on_click=go_page, args=('가족 설정',))
-        st.caption('가족 등록을 마치면 아래 기능을 이용할 수 있어요.')
-    with st.container(key='feature_grid'):
-        cols = st.columns(3, gap='small')
-        items = [('🎯','집안일 퀘스트','미션과 미션금'), ('🍚','함께 식사','식사 시간 추천'),
-                 ('💚','부모님 건강','증상·수면')]
-        for i, (icon, menu, description) in enumerate(items):
-            with cols[i]:
-                st.button(f'{icon}  \n**{menu}**  \n{description}', key=f'feature_{i}',
-                          use_container_width=True, disabled=not ready,
-                          on_click=go_page, args=(menu,))
+        st.button('가족 먼저 등록하기 →',type='primary',use_container_width=True,on_click=go_page,args=('가족 설정',))
+    pending=[q for q in d['quests'] if q['상태']=='진행 중']; today=str(today_kst())
+    todays=[r for r in credits if r['at'][:10]==today]
     if ready:
-        with st.container(key='home_settings'):
-            st.button('⚙️ 설정', key='home_settings_button', on_click=go_page, args=('가족 설정',))
+        with st.container(border=True):
+            st.subheader('오늘의 가족 현황')
+            st.write(f"**오늘 완료 {len(todays)}개**　·　남은 미션 {len(pending)}개　·　🪙 +{sum(r['coins'] for r in todays)}")
+            rate=count/(count+len(pending)) if count+len(pending) else 0
+            st.progress(rate,text=f'전체 미션 달성률 {rate:.0%}')
+    with st.container(key='feature_grid'):
+        cols=st.columns(3,gap='small')
+        items=[('🎯','집안일 퀘스트','할 일과 인증'),('🍚','함께 식사','식사 시간 추천'),('💚','부모님 건강','수면·병원 기록'),('🪙','코인 지갑','적립과 보상'),('📅','가족 일정','함께할 계획'),('🏡','가족 성장','레벨과 기록')]
+        for i,(icon,menu,detail) in enumerate(items):
+            with cols[i%3]:
+                st.button(f'{icon}  \n**{menu}**  \n{detail}',key=f'feature_{i}',use_container_width=True,disabled=not ready,on_click=go_page,args=(menu,))
+    if not ready: return
+    st.subheader('오늘의 추천 미션')
+    if pending:
+        for q in pending[:2]:
+            with st.container(border=True):
+                st.write(f"**{q['제목']}** · {n[q['담당']]} · 🪙 {q.get('코인',COINS_PER_MISSION)}")
+                st.button('사진 올려 완료하기',key='rec_'+q['id'],on_click=go_mission,args=(q,))
+    else:
+        st.write('오늘의 미션도 함께 완성해 봐요!')
+        st.button('새 미션 만들기',on_click=go_page,args=('집안일 퀘스트',))
+    if todays:
+        st.success('✓ 오늘 완료 · '+ ' · '.join(r['name'] for r in todays[:3]))
+    st.subheader('가족 일정 한눈에')
+    show_agenda(d,compact=True)
+    st.button('⚙️ 설정',on_click=go_page,args=('가족 설정',))
+
+
+def show_agenda(d,compact=False):
+    n=names(d); today=str(today_kst())
+    lines=[]
+    for r in sorted(d.get('events',[]),key=lambda r:r['day']):
+        if r['day']>=today: lines.append((r['day'],'📅 '+r['name']))
+    for r in d.get('visits',[]):
+        if r['day']>=today: lines.append((r['day'],'🏥 '+n.get(r['member'],'가족')+' · '+r['place']))
+    for slot in meal_candidates(d):
+        if slot['요일']==DAYS[today_kst().weekday()]: lines.append((today,'🍚 식사 가능 · '+slot['끼니']))
+    for q in d['quests']:
+        if q['상태']=='진행 중': lines.append((today,'🎯 예정 집안일 · '+n[q['담당']]+' · '+q['제목']))
+    with st.container(border=True):
+        if not lines: st.write('다가오는 일정이 없어요.')
+        for day,name in sorted(lines)[:5 if compact else None]:
+            st.write(('오늘' if day==today else day)+' · '+name)
+
+
+def agenda(d):
+    st.header('📅 가족 일정'); show_agenda(d)
+    events=d.setdefault('events',[])
+    options=['새 일정']+[e['id'] for e in events]
+    chosen=draft('large_choice','agenda_edit','등록 또는 수정',options,format_func=lambda x: next((e['name'] for e in events if e['id']==x),x))
+    old=next((e for e in events if e['id']==chosen),None)
+    label=draft('text_input','agenda_name_'+chosen,'일정 이름',value=old['name'] if old else '',placeholder='예: 가족 저녁 식사',max_chars=70)
+    day=draft('date_input','agenda_day_'+chosen,'날짜',value=date.fromisoformat(old['day']) if old else today_kst())
+    if st.button('일정 저장',type='primary'):
+        if not label.strip(): st.error('일정 이름을 입력해 주세요.')
+        else:
+            if old: old.update(name=label.strip(),day=day.isoformat())
+            else: events.append(dict(id=uid(),name=label.strip(),day=day.isoformat()))
+            saved_rerun()
+    if old and st.checkbox('선택한 일정을 삭제하겠습니다.',key='event_confirm_'+chosen):
+        if st.button('일정 삭제'):
+            events.remove(old); saved_rerun()
+
+
+def wallet(d):
+    st.header('🪙 코인 지갑')
+    earned,balance,credits=coin_state(d); n=names(d)
+    with st.container(key='gold_wallet',border=True):
+        st.metric('가족이 사용할 수 있는 코인',f'{balance:,}개')
+        st.caption(f'누적 적립 {earned:,}개 · 사용 {earned-balance:,}개')
+    overview,history,shop=st.tabs(['가족 현황','적립·사용 내역','보상 상점'])
+    with overview:
+        st.subheader('함께 모은 코인')
+        st.caption('개인별 적립 기록이에요. 보상은 가족 공동 지갑에서 사용해요.')
+        if n:
+            rows=[{'가족':name,'적립 코인':sum(r['coins'] for r in credits if r['member']==i)} for i,name in n.items()]
+            fig=px.bar(pd.DataFrame(rows),x='적립 코인',y='가족',orientation='h',text='적립 코인',color_discrete_sequence=['#bc821e'])
+            fig.update_layout(height=max(185,52*len(rows)+65),margin=dict(l=10,r=18,t=10,b=28)); fig.update_xaxes(rangemode='tozero',dtick=None,tickformat='d')
+            st.plotly_chart(fig,use_container_width=True,config={'displayModeBar':False})
+        if credits:
+            dates=sorted({r['at'][:10] for r in credits if r['at']}); total=0; series=[]
+            for day in dates:
+                total+=sum(r['coins'] for r in credits if r['at'][:10]==day); series.append({'날짜':day,'누적 코인':total})
+            if series: chart(pd.DataFrame(series),'날짜','누적 코인','날짜별 적립 추이',line=True)
+    with history:
+        for title,rows,prefix in [('적립 내역',credits,'+'),('사용 내역',list(reversed(d.get('coin_spends',[]))), '−')]:
+            st.subheader(title)
+            if not rows: st.write('아직 내역이 없어요.')
+            for r in rows[:50]:
+                stamp=r['at']; when=(stamp[:10]+' '+stamp[11:16]) if len(stamp)>10 else (stamp or '날짜 미기록')
+                st.write(f"**{r['name']} · {prefix}{r['coins']:,} 코인**")
+                st.caption(when+(' · '+n.get(r['member'],'가족') if 'member' in r else ''))
+    with shop:
+        for product in d.get('rewards',REWARD_DEFAULTS):
+            with st.container(border=True):
+                st.write(f"**{product['name']} · 🪙 {product['cost']:,}**")
+                missing=product['cost']-balance
+                if missing>0: st.caption(f'{missing:,}코인이 더 필요해요.')
+                elif st.checkbox('이 보상에 코인을 사용할게요.',key='buy_confirm_'+product['id']):
+                    if st.button('보상 받기',key='buy_'+product['id']):
+                        try:
+                            buy_reward(d,product['id'],uid()); st.session_state.save_notice='보상을 받았어요!'
+                            persist(); st.rerun()
+                        except ValueError as exc: st.error(str(exc))
+        with st.expander('관리자 · 상품과 가격 수정'):
+            shop_admin(d)
+
+
+def shop_admin(d):
+    expected=os.environ.get('BALANCE_ADMIN_PIN','')
+    if not expected:
+        st.caption('배포 설정에 관리자 비밀번호(BALANCE_ADMIN_PIN)를 지정하면 상품을 관리할 수 있어요.');return
+    pin=st.text_input('관리자 비밀번호',type='password',key='shop_admin_pin')
+    if not secrets.compare_digest(pin.encode(),expected.encode()): return
+    products=d.get('rewards',REWARD_DEFAULTS)
+    choice=draft('large_choice','shop_product','상품 선택',['새 상품']+[r['id'] for r in products],format_func=lambda x: next((r['name'] for r in products if r['id']==x),x))
+    old=next((r for r in products if r['id']==choice),None)
+    label=draft('text_input','shop_name_'+choice,'보상 이름',value=old['name'] if old else '',max_chars=60)
+    cost=draft('number_input','shop_cost_'+choice,'필요한 코인',1,100000,old['cost'] if old else 30)
+    if st.button('상품 저장'):
+        if not label.strip(): st.error('보상 이름을 적어 주세요.')
+        else:
+            d['rewards']=[r for r in products if r['id']!=choice]+[dict(id=choice if old else uid(),name=label.strip(),cost=int(cost))]
+            saved_rerun()
+
+
+def growth(d):
+    level,count,left=level_info(d)
+    st.header('🏡 가족 성장')
+    st.markdown(f'<div class="home-intro"><h2>{"🏠" if level==1 else "🏡 ✨" if level<4 else "🌿 🏡 🌟"} 가족 레벨 {level}</h2><p>함께 완료한 미션 {count}개</p></div>',unsafe_allow_html=True)
+    st.progress((count%5)/5,text=f'다음 레벨까지 미션 {left}개')
+    st.write('오늘도 함께해서 더 행복한 우리 가족!')
 
 
 def group_missions(quests):
@@ -518,6 +729,7 @@ def group_missions(quests):
 
 def quests(d):
     st.header('🎯 집안일 퀘스트')
+    celebrate(d)
     notice = st.session_state.pop('quest_notice', None)
     if notice:
         st.success(notice)
@@ -547,6 +759,7 @@ def quests(d):
             detail = ''
             people = draft('visible_checks', 'quests_539', '누가 할까요?', list(n), format_func=n.get)
             reward = draft('number_input', 'quests_540', '한 사람에게 줄 미션금(원)', 0, 1000000, 2000, 100)
+            coins = draft('number_input','mission_coin_reward','완료 보상 코인',1,10000,COINS_PER_MISSION,help='현금 미션금과 별도로 적립돼요.')
             consent = st.checkbox('안전과 미션금을 가족과 합의했습니다.')
             if st.button('미션 등록하기', use_container_width=True):
                 if not title.strip() or not people or not consent:
@@ -558,7 +771,7 @@ def quests(d):
                     group_id = uid()
                     for person in people:
                         d['quests'].append({'id': uid(), '그룹': group_id, '제목': title.strip(), '설명': detail,
-                                            '담당': person, '등록자': actor, '용돈': reward,
+                                            '담당': person, '등록자': actor, '용돈': reward, '코인': int(coins),
                                             '상태': '진행 중', '사진': None, '완료일': None, '지급일': None})
                     st.session_state.quest_step = steps[1]
                     st.session_state.quest_notice = '미션을 등록했어요! 담당 가족은 할 일을 마친 뒤 사진을 올리세요.'
@@ -568,7 +781,8 @@ def quests(d):
         visible = [group for group in groups if any(actor in [q['담당'], q['등록자']] for q in group)]
         if not visible:
             st.write('이 가족이 맡거나 등록한 미션이 없어요. 다른 가족을 선택하거나 ①에서 미션을 만들 수 있어요.')
-        for group in reversed(visible):
+        focus=st.session_state.pop('quest_focus',None)
+        for group in sorted(reversed(visible),key=lambda group:not any(q['id']==focus for q in group)):
             first = group[0]
             my_record = next((item for item in group if item['담당']==actor), None)
             card_done = (my_record is not None and my_record['상태'] in ('지급 대기','지급 완료')) or all(item['상태'] in ('지급 대기','지급 완료') for item in group)
@@ -594,7 +808,7 @@ def quests(d):
                 st.divider()
                 st.write('**📷 완료 사진·진행 상태**')
                 selected = draft('large_choice', 'quests_584' + first['id'], '사진을 제출하거나 확인할 가족',
-                    [q['담당'] for q in group], format_func=n.get, key='submitter_'+first['id'])
+                    [q['담당'] for q in group], index=next((i for i,item in enumerate(group) if item['id']==focus or item['담당']==actor),0), format_func=n.get, key='submitter_'+first['id'])
                 q = next(item for item in group if item['담당']==selected)
                 if q['상태'] in ('지급 대기','지급 완료'):
                     st.success('✓ '+n[selected]+'님 완료 · 미션금 적립됨')
@@ -628,7 +842,12 @@ def quests(d):
                             if sum(len(x.get('사진') or '') for x in d['quests'])+len(encoded)>15*1024*1024:
                                 raise ValueError('사진 보관 한도에 도달했습니다.')
                             q['사진'] = encoded
+                            old_level = level_info(d)[0]
                             transition_quest(q, '사진으로 미션 완료', selected)
+                            q['완료시각'] = now_kst()
+                            q.setdefault('코인', COINS_PER_MISSION)
+                            new_level = level_info(d)[0]
+                            st.session_state.coin_celebration = (q['코인'],new_level if new_level > old_level else None)
                             st.session_state.drafts.pop(photo_key,None)
                             st.session_state.reward_family = selected
                             st.session_state.quest_step = steps[2]
@@ -1061,6 +1280,18 @@ def main():
     .st-key-feature_grid .stButton button {min-height:124px;border-radius:20px!important;box-shadow:0 4px 12px #17487515!important;}
     .st-key-feature_grid .stButton button:disabled {opacity:.68!important;}
     @media(max-width:360px) {.st-key-feature_grid [data-testid="stHorizontalBlock"] {gap:5px!important;}}
+    .family-faces {display:flex;gap:12px;flex-wrap:wrap;color:#173b5d;}
+    .family-faces div {display:grid;justify-items:center;gap:4px;font-size:15px;}
+    .family-faces b {display:grid;place-items:center;background:#fff;border:1px solid #8fb4d1;width:46px;height:46px;border-radius:50%;}
+    .st-key-gold_wallet,.coin-celebrate {background:linear-gradient(130deg,#fff4cc,#fffdf6)!important;border:1px solid #e6c471;border-radius:20px;padding:14px;color:#654500;}
+    .coin-celebrate span {display:inline-block;font-size:30px;font-weight:800;}
+    .coin-celebrate.motion {animation:coin-in .38s ease-out both;}
+    .coin-celebrate.motion span {animation:coin-hop .55s .12s ease-out both;}
+    @keyframes coin-in {from {opacity:0;transform:translateY(8px)} to {opacity:1;transform:none}}
+    @keyframes coin-hop {0%,100% {transform:none} 50% {transform:translateY(-9px)}}
+    @media(prefers-reduced-motion:reduce) {.coin-celebrate.motion,.coin-celebrate.motion span {animation:none!important;}}
+    @media(max-width:640px) {.st-key-feature_grid [data-testid="stHorizontalBlock"] {grid-template-columns:repeat(2,minmax(0,1fr))!important;}}
+    @media(max-width:380px) {.st-key-feature_grid [data-testid="stHorizontalBlock"] {grid-template-columns:1fr!important;}}
     </style>''', unsafe_allow_html=True)
     if not st.session_state.get('splash_seen'):
         logo = st.empty()
@@ -1089,7 +1320,7 @@ def main():
     if page != '홈':
         st.button('← 홈 · 전체 메뉴', key='back_home', on_click=go_page, args=('홈',))
     {'홈': home, '집안일 퀘스트': quests, '함께 식사': meals,
-     '부모님 건강': health, '가족 설정': settings}[page](st.session_state.data)
+     '부모님 건강': health, '가족 설정': settings, '코인 지갑': wallet, '가족 일정': agenda, '가족 성장': growth}[page](st.session_state.data)
     if page == '가족 설정':
         if st.button('사용 안내 다시 보기'):
             st.session_state.tutorial_replay=True
