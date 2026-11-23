@@ -689,12 +689,12 @@ def agenda(d):
 def wallet(d):
     st.header('🪙 코인 지갑')
     earned,balance,credits=coin_state(d); n=names(d)
+    buyer = st.selectbox('누구의 보상을 볼까요?', list(n), format_func=n.get,
+                         index=None, placeholder='가족을 선택해 주세요', key='wallet_reward_member') if n else None
     with st.container(key='gold_wallet',border=True):
         st.metric('가족이 사용할 수 있는 코인',f'{balance:,}개')
         st.caption(f'누적 적립 {earned:,}개 · 사용 {earned-balance:,}개')
     overview,history,shop=st.tabs(['가족 현황','적립·사용 내역','보상 상점'])
-    buyer = st.selectbox('누구의 보상을 볼까요?', list(n), format_func=n.get,
-                         index=None, placeholder='가족을 선택해 주세요', key='wallet_reward_member') if n else None
     with overview:
         st.subheader('내가 얻은 보상')
         if buyer is None:
@@ -705,18 +705,18 @@ def wallet(d):
                 st.caption('아직 받은 보상이 없어요.')
             for row in received:
                 st.write(f"**{row['name']}** · {row['coins']:,}코인 · {row['at'][:10]}")
-        st.subheader('함께 모은 코인')
-        st.caption('개인별 적립 기록이에요. 보상은 가족 공동 지갑에서 사용해요.')
-        if n:
-            rows=[{'가족':name,'적립 코인':sum(r['coins'] for r in credits if r['member']==i)} for i,name in n.items()]
-            fig=px.bar(pd.DataFrame(rows),x='적립 코인',y='가족',orientation='h',text='적립 코인',color_discrete_sequence=['#bc821e'])
-            fig.update_layout(height=max(185,52*len(rows)+65),margin=dict(l=10,r=18,t=10,b=28)); fig.update_xaxes(rangemode='tozero',dtick=None,tickformat='d')
-            st.plotly_chart(fig,use_container_width=True,config={'displayModeBar':False})
-        if credits:
-            dates=sorted({r['at'][:10] for r in credits if r['at']}); total=0; series=[]
-            for day in dates:
-                total+=sum(r['coins'] for r in credits if r['at'][:10]==day); series.append({'날짜':day,'누적 코인':total})
-            if series: chart(pd.DataFrame(series),'날짜','누적 코인','날짜별 적립 추이',line=True)
+        with st.expander('가족별 코인 적립 현황'):
+            st.caption('개인별 적립 기록이에요. 보상은 가족 공동 지갑에서 사용해요.')
+            if n:
+                rows=[{'가족':name,'적립 코인':sum(r['coins'] for r in credits if r['member']==i)} for i,name in n.items()]
+                fig=px.bar(pd.DataFrame(rows),x='적립 코인',y='가족',orientation='h',text='적립 코인',color_discrete_sequence=['#bc821e'])
+                fig.update_layout(height=max(185,52*len(rows)+65),margin=dict(l=10,r=18,t=10,b=28)); fig.update_xaxes(rangemode='tozero',dtick=None,tickformat='d')
+                st.plotly_chart(fig,use_container_width=True,config={'displayModeBar':False})
+            if credits:
+                dates=sorted({r['at'][:10] for r in credits if r['at']}); total=0; series=[]
+                for day in dates:
+                    total+=sum(r['coins'] for r in credits if r['at'][:10]==day); series.append({'날짜':day,'누적 코인':total})
+                if series: chart(pd.DataFrame(series),'날짜','누적 코인','날짜별 적립 추이',line=True)
     with history:
         for title,rows,prefix in [('적립 내역',credits,'+'),('사용 내역',list(reversed(d.get('coin_spends',[]))), '−')]:
             st.subheader(title)
@@ -915,21 +915,16 @@ def quests(d):
                     st.image(base64.b64decode(q['사진']), caption=n[selected]+'의 완료 사진', width=320)
                 if not card_done and q['상태']=='진행 중':
                     mission_photo_controls(d, group, q, n, 'assigned')
-        registered = [g for g in groups if g[0]['등록자'] == actor]
+        # Completed registered missions already appear in the completed list.
+        registered = [g for g in groups if g[0]['등록자'] == actor and not group_completion(g)] if current == '진행 중' else []
         if registered:
-            with st.expander(f'내가 등록한 미션 {len(registered)}개'):
+            with st.expander(f'내가 등록한 진행 중 미션 {len(registered)}개'):
                 for group in reversed(registered):
-                    closed = bool(group_completion(group))
-                    label = '완료' if closed else '진행 중'
-                    st.write(f"{group[0]['제목']} · {label}")
+                    st.write(group[0]['제목'])
                     for item in group:
-                        if not closed and item['상태'] == '진행 중' and item['담당'] in n:
+                        if item['상태'] == '진행 중' and item['담당'] in n:
                             if st.toggle(f"📷 {n[item['담당']]}님 사진 올리기", key='registered_submit_'+item['id']):
                                 mission_photo_controls(d, group, item, n, 'registered')
-                        if item.get('사진') and item['상태'] in COMPLETED:
-                            member = n.get(item['담당'], '알 수 없음')
-                            if st.toggle(f'{member} 완료 사진 보기', key='registered_photo_'+item['id']):
-                                st.image(base64.b64decode(item['사진']), width=320)
     else:
         reward_who = draft('large_choice', 'quests_614', '미션금 확인할 가족', list(n), format_func=n.get, index=list(n).index(st.session_state.get('reward_family') if st.session_state.get('reward_family') in n else actor), key='reward_family')
         earned = sum(r['coins'] for r in coin_state(d)[2] if r['member']==reward_who)
@@ -1355,6 +1350,20 @@ def main():
     @media(prefers-reduced-motion:reduce) {.coin-celebrate.motion,.coin-celebrate.motion span {animation:none!important;}}
     @media(max-width:640px) {.st-key-feature_grid [data-testid="stHorizontalBlock"] {grid-template-columns:repeat(2,minmax(0,1fr))!important;}}
     @media(max-width:380px) {.st-key-feature_grid [data-testid="stHorizontalBlock"] {grid-template-columns:1fr!important;}}
+      /* Keep app text readable when the device or host uses a dark theme. */
+      [data-testid="stAppViewContainer"] { color-scheme: light; }
+      [data-testid="stMainBlockContainer"] :is([data-testid="stMarkdownContainer"], [data-testid="stCaptionContainer"], [data-testid="stWidgetLabel"], [data-testid="stMetricLabel"], [data-testid="stMetricValue"], summary, [role="tab"]) {
+        color: #173653 !important;
+      }
+      [data-testid="stMainBlockContainer"] :is([data-testid="stCaptionContainer"], [data-testid="stWidgetLabel"], summary, [role="tab"]) :is(p, span),
+      [data-testid="stMainBlockContainer"] [data-testid="stMarkdownContainer"] p { color: inherit; }
+      [data-testid="stMainBlockContainer"] :is(button, [data-testid="stAlert"]) [data-testid="stMarkdownContainer"] { color: inherit !important; }
+      [data-testid="stMainBlockContainer"] :is(input:not([type="checkbox"]):not([type="radio"]), textarea) {
+        background-color: #fff !important; color: #173653 !important;
+      }
+      [data-testid="stMainBlockContainer"] :is(input, textarea)::placeholder { color: #52667a !important; opacity: 1; }
+      [data-testid="stMainBlockContainer"] [data-testid="stProgress"] [role="progressbar"] { background-color: #d3e5f2; }
+      [data-testid="stMainBlockContainer"] [data-testid="stProgress"] [role="progressbar"] > div { background-color: #24669c; }
     </style>''', unsafe_allow_html=True)
     if not st.session_state.get('splash_seen'):
         logo = st.empty()
