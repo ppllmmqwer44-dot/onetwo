@@ -340,6 +340,13 @@ def quest_summary(d):
 
 
 def home(d):
+    if not st.session_state.get('setup_done', False):
+        st.markdown('<div class="home-intro"><h1>우리 가족의 하루를<br>함께 챙겨요</h1><p>집안일은 나눠서, 식사는 함께, 건강은 꾸준히.</p></div>', unsafe_allow_html=True)
+        st.subheader('처음이라면 이렇게 시작하세요')
+        st.write('**1. 가족 설정**에서 이름이나 호칭을 추가하세요.')
+        st.write('**2. 등록을 마치면** 아래 아이콘에서 퀘스트·식사·건강을 이용할 수 있어요.')
+        st.button('⚙️ 가족 설정하러 가기', type='primary', use_container_width=True, on_click=go_page, args=('가족 설정',))
+        return
     st.header('🏡 우리 가족, 오늘도 균형 있게')
     st.write('집안일은 퀘스트로, 식사는 함께, 건강은 꾸준하게!')
     st.metric('진행 중인 집안일', f"{sum(q['상태']=='진행 중' for q in d['quests'])}개")
@@ -838,6 +845,9 @@ def main():
     [data-testid="stExpander"] details {background:#fff !important;border:1px solid #8fb4d1 !important;border-radius:14px;}
     [data-testid="stExpander"] summary {background:#fff !important;color:#173b5d !important;border-radius:inherit;}
     [data-testid="stExpander"] details[open] summary {background:#eff7ff !important;border-bottom:1px solid #b8d2e8;}
+    .home-intro {background:linear-gradient(125deg,#fff,#d7edff);border:1px solid #8fb4d1;border-radius:24px;padding:clamp(18px,5vw,36px);}
+    .home-intro h1 {margin:0;padding:0;}
+    .home-intro p {margin:12px 0 0;color:#234e73;}
     </style>''', unsafe_allow_html=True)
     if 'data' not in st.session_state:
         st.session_state.data = empty_data()
@@ -853,11 +863,11 @@ def main():
             st.write('집안일을 나누고, 함께 식사하고, 건강도 챙겨요.')
             if st.button('시작하기', use_container_width=True, type='primary'):
                 st.session_state.started = True
-                go_page('가족 설정' if not st.session_state.get('setup_done') else '홈')
+                go_page('홈')
                 st.rerun()
         return
     onboarding = not st.session_state.get('setup_done', False)
-    page = '가족 설정' if onboarding else st.session_state.get('main_menu', '홈')
+    page = st.session_state.get('main_menu', '홈')
     st.markdown(f'<div class="app-masthead"><img src="data:image/png;base64,{APP_ICON}" alt=""><strong>우리家 밸런스</strong></div>', unsafe_allow_html=True)
     {'홈': home, '집안일 퀘스트': quests, '함께 식사': meals,
      '부모님 건강': health, '가족 설정': settings}[page](st.session_state.data)
@@ -865,11 +875,11 @@ def main():
         st.caption('기록은 현재 접속 중에만 보관됩니다.')
     with st.container(key='bottom_nav'):
         cols = st.columns(5, gap='small')
-        for col, menu, icon, label in zip(cols, ['가족 설정', *MENUS[:-1]], ['⚙️','🏠','🎯','🍚','💚'], ['가족 설정','홈','퀘스트','식사','건강']):
+        for col, menu, icon, label in zip(cols, MENUS, ['🏠','🎯','🍚','💚','⚙️'], ['홈','퀘스트','식사','건강','가족 설정']):
             with col:
                 st.button(f'{icon}  \n{label}', key='nav_'+menu, use_container_width=True,
                           type='primary' if page == menu else 'secondary',
-                          disabled=onboarding and menu != '가족 설정', on_click=go_page, args=(menu,))
+                          disabled=onboarding and menu not in ('홈', '가족 설정'), on_click=go_page, args=(menu,))
 
 
 if __name__ == '__main__':
