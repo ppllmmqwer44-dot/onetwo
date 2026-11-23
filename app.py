@@ -752,6 +752,62 @@ def group_missions(quests):
     return list(groups.values())
 
 
+def mission_photo_controls(d, group, q, n, source):
+    selected = q['담당']
+    photo_key = 'mission_photo_'+q['id']
+    upload_key = 'photo_'+source+'_'+q['id']
+    error_key = 'photo_error_'+q['id']
+    def keep_photo(upload_key=upload_key, photo_key=photo_key, error_key=error_key):
+        st.session_state.pop(error_key, None)
+        st.session_state.drafts.pop(photo_key, None)
+        photo = st.session_state.get(upload_key)
+        if photo is None:
+            st.session_state.drafts.pop(photo_key,None)
+            return
+        try:
+            encoded = prepare_photo(photo.getvalue())
+            st.session_state.drafts[photo_key] = encoded
+        except ValueError as exc:
+            st.session_state[error_key] = str(exc)
+    st.file_uploader('완료 사진 선택하기', type=['jpg','jpeg','png','webp'], key=upload_key, on_change=keep_photo)
+    if st.session_state.get(error_key):
+        st.error(st.session_state[error_key])
+    encoded = st.session_state.drafts.get(photo_key)
+    if encoded:
+        st.caption('완료 사진이 임시 저장됐어요.')
+        if st.button('임시 사진 지우기',key='drop_'+source+'_'+q['id']):
+            st.session_state.drafts.pop(photo_key,None)
+            saved_rerun()
+    if st.button('📷 사진 제출하고 미션 완료!', key='finish_'+source+'_'+q['id'], disabled=not encoded, use_container_width=True):
+        try:
+            if group_completion(group):
+                raise ValueError('이미 다른 가족이 완료한 미션이에요.')
+            if sum(len(x.get('사진') or '') for x in d['quests'])+len(encoded)>15*1024*1024:
+                raise ValueError('사진 보관 한도에 도달했습니다.')
+            old_level = level_info(d)[0]
+            updated = dict(q, 사진=encoded)
+            transition_quest(updated, '사진으로 미션 완료', selected)
+            q.update(updated)
+            q['완료시각'] = now_kst()
+            q.setdefault('코인', COINS_PER_MISSION)
+            new_level = level_info(d)[0]
+            st.session_state.coin_celebration = (q['코인'],new_level if new_level > old_level else None)
+            st.session_state.drafts.pop(photo_key,None)
+            st.session_state.reward_family = selected
+            st.session_state.active_actor = selected
+            st.session_state.quest_actor_reset = True
+            st.session_state.mission_filter = '완료한 미션'
+            st.session_state.quest_focus = q['id']
+            for dk in list(st.session_state.drafts):
+                if dk.endswith(('_reward_family', '_quest_actor')):
+                    st.session_state.drafts.pop(dk)
+                    st.session_state.pop('draft_widget_'+dk,None)
+            st.session_state.quest_notice = f"{n[selected]}님 미션 성공! +{q['코인']:,}코인 적립 🎉"
+            saved_rerun()
+        except ValueError as exc:
+            st.error(str(exc))
+
+
 def quests(d):
     st.header('🎯 집안일 퀘스트')
     celebrate(d)
@@ -772,6 +828,8 @@ def quests(d):
     actor = st.session_state.get('active_actor')
     if actor not in n:
         actor = next(iter(n))
+    if st.session_state.pop('quest_actor_reset', False):
+        st.session_state.pop('draft_widget_'+st.session_state.family_key[:12]+'_quests_532_quest_actor', None)
     if step != steps[2]:
         actor = draft('large_choice', 'quests_532', '등록하는 가족' if step == steps[0] else '누구의 미션을 볼까요?',
                              list(n), format_func=n.get, index=list(n).index(actor), key='quest_actor')
@@ -830,57 +888,7 @@ def quests(d):
                 if card_done and q.get('사진') and st.toggle('완료 사진 보기', key='view_photo_'+q['id']):
                     st.image(base64.b64decode(q['사진']), caption=n[selected]+'의 완료 사진', width=320)
                 if not card_done and q['상태']=='진행 중':
-                    photo_key = 'mission_photo_'+q['id']
-                    upload_key = 'photo_'+q['id']
-                    error_key = 'photo_error_'+q['id']
-                    def keep_photo(upload_key=upload_key, photo_key=photo_key, error_key=error_key):
-                        st.session_state.pop(error_key, None)
-                        st.session_state.drafts.pop(photo_key, None)
-                        photo = st.session_state.get(upload_key)
-                        if photo is None:
-                            st.session_state.drafts.pop(photo_key,None)
-                            return
-                        try:
-                            encoded = prepare_photo(photo.getvalue())
-                            st.session_state.drafts[photo_key] = encoded
-                        except ValueError as exc:
-                            st.session_state[error_key] = str(exc)
-                    st.file_uploader('완료 사진 선택하기', type=['jpg','jpeg','png','webp'], key=upload_key, on_change=keep_photo)
-                    if st.session_state.get(error_key):
-                        st.error(st.session_state[error_key])
-                    encoded = st.session_state.drafts.get(photo_key)
-                    if encoded:
-                        st.caption('완료 사진이 임시 저장됐어요.')
-                        if st.button('임시 사진 지우기',key='drop_'+q['id']):
-                            st.session_state.drafts.pop(photo_key,None)
-                            saved_rerun()
-                    if st.button('📷 사진 제출하고 미션 완료!', key='finish_'+q['id'], disabled=not encoded, use_container_width=True):
-                        try:
-                            if group_completion(group):
-                                raise ValueError('이미 다른 가족이 완료한 미션이에요.')
-                            if sum(len(x.get('사진') or '') for x in d['quests'])+len(encoded)>15*1024*1024:
-                                raise ValueError('사진 보관 한도에 도달했습니다.')
-                            old_level = level_info(d)[0]
-                            updated = dict(q, 사진=encoded)
-                            transition_quest(updated, '사진으로 미션 완료', selected)
-                            q.update(updated)
-                            q['완료시각'] = now_kst()
-                            q.setdefault('코인', COINS_PER_MISSION)
-                            new_level = level_info(d)[0]
-                            st.session_state.coin_celebration = (q['코인'],new_level if new_level > old_level else None)
-                            st.session_state.drafts.pop(photo_key,None)
-                            st.session_state.reward_family = selected
-                            st.session_state.active_actor = selected
-                            st.session_state.mission_filter = '완료한 미션'
-                            st.session_state.quest_focus = q['id']
-                            for dk in list(st.session_state.drafts):
-                                if dk.endswith(('_reward_family', '_quest_actor')):
-                                    st.session_state.drafts.pop(dk)
-                                    st.session_state.pop('draft_widget_'+dk,None)
-                            st.session_state.quest_notice = f"{n[selected]}님 미션 성공! +{q['코인']:,}코인 적립 🎉"
-                            saved_rerun()
-                        except ValueError as exc:
-                            st.error(str(exc))
+                    mission_photo_controls(d, group, q, n, 'assigned')
         registered = [g for g in groups if g[0]['등록자'] == actor]
         if registered:
             with st.expander(f'내가 등록한 미션 {len(registered)}개'):
@@ -890,8 +898,8 @@ def quests(d):
                     st.write(f"{group[0]['제목']} · {label}")
                     for item in group:
                         if not closed and item['상태'] == '진행 중' and item['담당'] in n:
-                            st.button(f"📷 {n[item['담당']]}님으로 사진 제출",
-                                      key='registered_submit_'+item['id'], on_click=go_mission, args=(item,))
+                            if st.toggle(f"📷 {n[item['담당']]}님 사진 올리기", key='registered_submit_'+item['id']):
+                                mission_photo_controls(d, group, item, n, 'registered')
                         if item.get('사진') and item['상태'] in COMPLETED:
                             member = n.get(item['담당'], '알 수 없음')
                             if st.toggle(f'{member} 완료 사진 보기', key='registered_photo_'+item['id']):
