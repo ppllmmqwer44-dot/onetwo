@@ -559,9 +559,15 @@ def celebrate(d):
     if prefs.get('sound',False): st.audio(celebration_audio(),format='audio/wav',autoplay=True)
 
 
-def mission_is_done(group, actor):
-    own = next((q for q in group if q['담당'] == actor), None)
-    return own['상태'] in COMPLETED if own else all(q['상태'] in COMPLETED for q in group)
+def personal_missions(groups, actor):
+    pending, done = [], []
+    for group in groups:
+        for assignment in group:
+            if assignment['담당'] == actor:
+                target = done if assignment['상태'] in COMPLETED else pending
+                target.append((group, assignment))
+    done.sort(key=lambda pair: str(pair[1].get('완료시각') or pair[1].get('완료일') or ''), reverse=True)
+    return pending, done
 
 
 def go_mission(q):
@@ -744,7 +750,6 @@ def quests(d):
     if not require_family(d):
         return
     n = names(d)
-    st.write('**미션 등록 → 할 일 끝내고 사진 제출 → 미션금 확인**')
     steps = ['① 미션 만들기', '② 미션 완료하기', '③ 미션금 보기']
     default_step = steps[1] if d['quests'] else steps[0]
     step = st.session_state.get('quest_step', default_step)
@@ -756,7 +761,7 @@ def quests(d):
     if actor not in n:
         actor = next(iter(n))
     if step != steps[2]:
-        actor = draft('large_choice', 'quests_532', '등록하는 가족' if step == steps[0] else '미션을 볼 가족',
+        actor = draft('large_choice', 'quests_532', '등록하는 가족' if step == steps[0] else '누구의 미션을 볼까요?',
                              list(n), format_func=n.get, index=list(n).index(actor), key='quest_actor')
         st.session_state.active_actor = actor
     if step == steps[0]:
@@ -788,55 +793,30 @@ def quests(d):
                     saved_rerun()
     elif step == steps[1]:
         groups = group_missions(d['quests'])
-        visible = [group for group in groups if any(actor in [q['담당'], q['등록자']] for q in group)]
-        if not visible:
-            st.write('이 가족이 맡거나 등록한 미션이 없어요. 다른 가족을 선택하거나 ①에서 미션을 만들 수 있어요.')
         focus = st.session_state.pop('quest_focus', None)
-        done = [g for g in visible if mission_is_done(g, actor)]
-        pending = [g for g in visible if not mission_is_done(g, actor)]
+        pending, done = personal_missions(groups, actor)
         current = st.session_state.get('mission_filter', '진행 중')
-        if visible:
-            left, right = st.columns(2)
-            for col, label, groups_for_label in [(left, '진행 중', pending), (right, '완료한 미션', done)]:
-                with col:
-                    st.button(f'{label} {len(groups_for_label)}개', key='mission_filter_'+label,
-                              type='primary' if current == label else 'secondary', use_container_width=True,
-                              on_click=st.session_state.update, args=({'mission_filter': label},))
-        shown = done if current == '완료한 미션' else pending
-        if visible and not shown:
-            st.write('아직 완료한 미션이 없어요.' if current == '완료한 미션' else '진행 중인 미션이 없어요.')
-        for group in sorted(reversed(shown), key=lambda group: not any(q['id'] == focus for q in group)):
-            first = group[0]
-            my_record = next((item for item in group if item['담당'] == actor), None)
-            card_done = mission_is_done(group, actor)
-            with st.container(border=True):
-                if card_done:
-                    st.markdown('<span class="completed-mission-marker"></span>', unsafe_allow_html=True)
-                    st.success('✓ 내가 완료한 미션' if my_record else '✓ 모두 완료한 미션')
-                st.subheader(('✓ ' if card_done else '🎯 ')+first['제목'])
-                st.write('등록한 가족: '+n[first['등록자']])
-                st.divider()
-                st.write('**함께할 가족**')
-                st.write(' · '.join(('✓ ' if q['상태'] in ('지급 대기','지급 완료') else '')+n[q['담당']] for q in group))
-                if len({q.get('코인', COINS_PER_MISSION) for q in group}) == 1:
-                    st.write(f"🪙 1인당 미션금 {first.get('코인', COINS_PER_MISSION):,}코인")
-                else:
-                    st.write('미션금: ' + ' / '.join(n[q['담당']] + f" {q.get('코인', COINS_PER_MISSION):,}코인" for q in group))
-                st.divider()
-                if first['설명']:
-                    st.write(first['설명'])
-                    st.divider()
-                completed = [n[item['담당']] for item in group if item['상태'] in COMPLETED]
-                st.write(f'완료 {len(completed)}/{len(group)}명' + (' · ' + ' · '.join(completed) if completed else ''))
-                st.divider()
-                st.write('**📷 완료 사진·진행 상태**')
-                selected = draft('large_choice', 'quests_584' + first['id'], '사진을 제출하거나 확인할 가족',
-                    [q['담당'] for q in group], index=next((i for i,item in enumerate(group) if item['id']==focus or item['담당']==actor),0), format_func=n.get, key='submitter_'+first['id'])
-                q = next(item for item in group if item['담당']==selected)
-                if q['상태'] in ('지급 대기','지급 완료'):
-                    st.success('✓ '+n[selected]+'님 완료 · 미션금 적립됨')
-
-                if q.get('사진') and st.toggle('완료 사진 보기', key='view_photo_'+q['id']):
+        left, right = st.columns(2)
+        for col, label, items in [(left, '진행 중', pending), (right, '완료한 미션', done)]:
+            with col:
+                st.button(f'{label} {len(items)}개', key='mission_filter_'+label,
+                          type='primary' if current == label else 'secondary', use_container_width=True,
+                          on_click=st.session_state.update, args=({'mission_filter': label},))
+        shown = done if current == '완료한 미션' else pending[::-1]
+        if not shown:
+            st.caption(f'{n[actor]}님이 완료한 미션이 없어요.' if current == '완료한 미션' else f'{n[actor]}님이 맡은 진행 중 미션이 없어요.')
+        for group, q in sorted(shown, key=lambda pair: pair[1]['id'] != focus):
+            selected = actor
+            card_done = q['상태'] in COMPLETED
+            count = sum(item['상태'] in COMPLETED for item in group)
+            icon = '✓' if card_done else '🎯'
+            coins = q.get('코인', COINS_PER_MISSION)
+            with st.expander(f"{icon} {q['제목']} · {coins:,}코인 · {count}/{len(group)}명 완료", expanded=q['id'] == focus):
+                st.caption('등록: '+ n.get(q['등록자'], '알 수 없음') + ' / 담당: ' + ' · '.join(
+                    ('✓ ' if item['상태'] in COMPLETED else '') + n.get(item['담당'], '알 수 없음') for item in group))
+                if q.get('설명'):
+                    st.write(q['설명'])
+                if card_done and q.get('사진') and st.toggle('완료 사진 보기', key='view_photo_'+q['id']):
                     st.image(base64.b64decode(q['사진']), caption=n[selected]+'의 완료 사진', width=320)
                 if q['상태']=='진행 중':
                     photo_key = 'mission_photo_'+q['id']
@@ -884,6 +864,17 @@ def quests(d):
                             saved_rerun()
                         except ValueError as exc:
                             st.error(str(exc))
+        registered = [g for g in groups if g[0]['등록자'] == actor]
+        if registered:
+            with st.expander(f'내가 등록한 미션 {len(registered)}개'):
+                for group in reversed(registered):
+                    count = sum(item['상태'] in COMPLETED for item in group)
+                    st.write(f"{group[0]['제목']} · {count}/{len(group)}명 완료")
+                    for item in group:
+                        if item.get('사진') and item['상태'] in COMPLETED:
+                            member = n.get(item['담당'], '알 수 없음')
+                            if st.toggle(f'{member} 완료 사진 보기', key='registered_photo_'+item['id']):
+                                st.image(base64.b64decode(item['사진']), width=320)
     else:
         reward_who = draft('large_choice', 'quests_614', '미션금 확인할 가족', list(n), format_func=n.get, index=list(n).index(st.session_state.get('reward_family') if st.session_state.get('reward_family') in n else actor), key='reward_family')
         earned = sum(r['coins'] for r in coin_state(d)[2] if r['member']==reward_who)
