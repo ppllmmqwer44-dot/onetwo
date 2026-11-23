@@ -258,7 +258,7 @@ def add_family_member(d, name):
 def settings(d):
     st.header('👨‍👩‍👧‍👦 우리 가족 등록')
     if not st.session_state.get('setup_done'):
-        st.markdown('<div class="setup-banner"><strong>첫 사용 · 가족 등록</strong><p>이름이나 호칭을 추가한 뒤, 홈으로 이동하세요.</p></div>', unsafe_allow_html=True)
+        st.markdown('<p class="setup-note">가족 이름을 추가한 뒤 홈으로 이동하세요.</p>', unsafe_allow_html=True)
     if d['members']:
         st.subheader('등록된 우리 가족')
         for member in d['members']:
@@ -820,6 +820,20 @@ def main():
     .welcome-hero img {width:96px;border-radius:22%;}
     .welcome-hero h1 {overflow-wrap:anywhere;}
     .st-key-welcome_art .stButton button {border-radius:999px!important;}
+    .stApp,.stApp button,.stApp input,.stApp textarea {font-family:'Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif;}
+    .stApp h1,.stApp h2,.stApp h3 {font-weight:650;letter-spacing:-.035em;line-height:1.3;word-break:keep-all;overflow-wrap:anywhere;}
+    .st-key-welcome_art {background:none;box-shadow:none;text-align:center;}
+    .st-key-welcome_art p {text-align:center;}
+    .welcome-hero {background:none;border:0;padding:12px 0 0;}
+    .welcome-hero img {display:block;margin:0 auto 12px;}
+    .welcome-hero h1 {text-align:center;padding-top:0;}
+    .setup-note {margin:0 0 10px;color:#285574;}
+    .stApp [data-testid="stTextInput"] input {background:#fff!important;color:#173650!important;}
+    .stApp [data-baseweb="input"] {border:1px solid #7d9db8!important;}
+    .stButton > button,.stFormSubmitButton > button,[data-testid="stBaseButton-pills"],[data-testid="stBaseButton-pillsActive"] {background:linear-gradient(135deg,#174e81,#123766)!important;border-color:#123766!important;}
+    .st-key-bottom_nav .stButton button {background:#eef6ff!important;border:1px solid #a5c5df!important;}
+    .st-key-bottom_nav button[data-testid="stBaseButton-primary"] {background:#123766!important;}
+    .st-key-bottom_nav button[data-testid="stBaseButton-primary"] p {color:#fff!important;}
     </style>''', unsafe_allow_html=True)
     if 'data' not in st.session_state:
         st.session_state.data = empty_data()
