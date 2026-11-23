@@ -627,7 +627,7 @@ def home(d):
     pending_groups = [g for g in groups if not group_completion(g) and any(q['상태']=='진행 중' for q in g)]
     pending = [next(q for q in g if q['상태']=='진행 중') for g in pending_groups]
     today=str(today_kst())
-    today_count = sum(any(str(q.get('완료시각') or q.get('완료일') or '')[:10] == today for q in group_completion(g)) for g in groups)
+    today_count = sum(min((str(q.get('완료시각') or q.get('완료일'))[:10] for q in group_completion(g) if q.get('완료시각') or q.get('완료일')), default='') == today for g in groups)
     todays=[r for r in credits if r['at'][:10]==today]
     if ready:
         with st.container(border=True):
@@ -911,14 +911,15 @@ def quests(d):
         focus = st.session_state.get('quest_focus')
         pending, done = personal_missions(groups, actor)
         current = st.session_state.get('mission_filter', '진행 중')
+        registered = [g for g in groups if any(q['등록자'] == actor and q['상태'] == '진행 중' for q in g) and not group_completion(g) and not any(q['담당'] == actor for q in g)]
         left, right = st.columns(2)
         for col, label, items in [(left, '진행 중', pending), (right, '완료한 미션', done)]:
             with col:
-                st.button(f'{label} {len(items)}개', key='mission_filter_'+label,
+                st.button(f'{label} {len(items) + (len(registered) if label == "진행 중" else 0)}개', key='mission_filter_'+label,
                           type='primary' if current == label else 'secondary', use_container_width=True,
                           on_click=st.session_state.update, args=({'mission_filter': label},))
         shown = done if current == '완료한 미션' else pending[::-1]
-        if not shown:
+        if not shown and (current != '진행 중' or not registered):
             st.caption(f'{n[actor]}님이 완료한 미션이 없어요.' if current == '완료한 미션' else f'{n[actor]}님이 맡은 진행 중 미션이 없어요.')
         for group, q in sorted(shown, key=lambda pair: pair[1]['id'] != focus):
             selected = q['담당']
@@ -934,9 +935,7 @@ def quests(d):
                     st.image(base64.b64decode(q['사진']), caption=n[selected]+'의 완료 사진', width=320)
                 if not card_done and q['상태']=='진행 중':
                     mission_photo_controls(d, group, q, n, 'assigned')
-        # Completed registered missions already appear in the completed list.
-        registered = [g for g in groups if g[0]['등록자'] == actor and not group_completion(g)] if current == '진행 중' else []
-        if registered:
+        if registered and current == '진행 중':
             with st.expander(f'내가 등록한 진행 중 미션 {len(registered)}개'):
                 for group in reversed(registered):
                     st.write(group[0]['제목'])
