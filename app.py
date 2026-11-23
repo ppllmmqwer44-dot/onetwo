@@ -795,7 +795,7 @@ def quests(d):
                     saved_rerun()
     elif step == steps[1]:
         groups = group_missions(d['quests'])
-        focus = st.session_state.pop('quest_focus', None)
+        focus = st.session_state.get('quest_focus')
         pending, done = personal_missions(groups, actor)
         current = st.session_state.get('mission_filter', '진행 중')
         left, right = st.columns(2)
@@ -823,7 +823,10 @@ def quests(d):
                 if q['상태']=='진행 중':
                     photo_key = 'mission_photo_'+q['id']
                     upload_key = 'photo_'+q['id']
-                    def keep_photo(upload_key=upload_key, photo_key=photo_key):
+                    error_key = 'photo_error_'+q['id']
+                    def keep_photo(upload_key=upload_key, photo_key=photo_key, error_key=error_key):
+                        st.session_state.pop(error_key, None)
+                        st.session_state.drafts.pop(photo_key, None)
                         photo = st.session_state.get(upload_key)
                         if photo is None:
                             st.session_state.drafts.pop(photo_key,None)
@@ -832,10 +835,10 @@ def quests(d):
                             encoded = prepare_photo(photo.getvalue())
                             st.session_state.drafts[photo_key] = encoded
                         except ValueError as exc:
-                            st.session_state.photo_error = str(exc)
+                            st.session_state[error_key] = str(exc)
                     st.file_uploader('완료 사진 선택하기', type=['jpg','jpeg','png','webp'], key=upload_key, on_change=keep_photo)
-                    if st.session_state.get('photo_error'):
-                        st.error(st.session_state.pop('photo_error'))
+                    if st.session_state.get(error_key):
+                        st.error(st.session_state[error_key])
                     encoded = st.session_state.drafts.get(photo_key)
                     if encoded:
                         st.caption('완료 사진이 임시 저장됐어요.')
@@ -846,9 +849,10 @@ def quests(d):
                         try:
                             if sum(len(x.get('사진') or '') for x in d['quests'])+len(encoded)>15*1024*1024:
                                 raise ValueError('사진 보관 한도에 도달했습니다.')
-                            q['사진'] = encoded
                             old_level = level_info(d)[0]
-                            transition_quest(q, '사진으로 미션 완료', selected)
+                            updated = dict(q, 사진=encoded)
+                            transition_quest(updated, '사진으로 미션 완료', selected)
+                            q.update(updated)
                             q['완료시각'] = now_kst()
                             q.setdefault('코인', COINS_PER_MISSION)
                             new_level = level_info(d)[0]
