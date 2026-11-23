@@ -290,6 +290,13 @@ def settings(d):
                     else:
                         member['이름'] = clean
                         st.rerun()
+    if st.session_state.get('setup_done'):
+        with st.expander('함께 식사 목표 수정'):
+            with st.form('edit_meal_goal'):
+                goal = st.number_input('일주일에 함께 식사할 횟수', 1, 21, int(d['meal_goal']))
+                if st.form_submit_button('식사 목표 저장', use_container_width=True):
+                    d['meal_goal'] = int(goal)
+                    st.success('식사 목표를 저장했어요.')
     with st.expander('전체 기록 초기화'):
         agreed = st.checkbox('사진과 미션금을 포함한 모든 기록 삭제에 동의합니다.', key='reset_consent')
         if st.button('전체 기록 초기화', disabled=not agreed, use_container_width=True):
@@ -347,14 +354,17 @@ def home(d):
                   on_click=go_page, args=('가족 설정',))
         st.caption('가족 등록을 마치면 아래 기능을 이용할 수 있어요.')
     with st.container(key='feature_grid'):
-        cols = st.columns(2, gap='small')
-        items = [('🎯','집안일 퀘스트','미션과 미션금'), ('🍚','함께 식사','같이 먹을 시간 찾기'),
-                 ('💚','부모님 건강','증상 안내와 수면 기록'), ('⚙️','가족 설정','이름·호칭 관리')]
+        cols = st.columns(3, gap='small')
+        items = [('🎯','집안일 퀘스트','미션과 미션금'), ('🍚','함께 식사','식사 시간 추천'),
+                 ('💚','부모님 건강','증상·수면')]
         for i, (icon, menu, description) in enumerate(items):
-            with cols[i % 2]:
+            with cols[i]:
                 st.button(f'{icon}  \n**{menu}**  \n{description}', key=f'feature_{i}',
-                          use_container_width=True, disabled=not ready and i != 3,
+                          use_container_width=True, disabled=not ready,
                           on_click=go_page, args=(menu,))
+    if ready:
+        with st.container(key='home_settings'):
+            st.button('⚙️ 설정', key='home_settings_button', on_click=go_page, args=('가족 설정',))
 
 
 def group_missions(quests):
@@ -504,8 +514,7 @@ def meals(d):
     if not require_family(d):
         return
     n = names(d)
-    goal = st.number_input('이번 주 함께 식사 목표(회)', 1, 21, int(d['meal_goal']))
-    d['meal_goal'] = goal
+    goal = int(d['meal_goal'])
     tab1, tab2 = st.tabs(['가능 시간 찾기', '식사 기록·분석'])
     with tab1:
         st.subheader('한 번에 식사 시간 정하기')
@@ -840,12 +849,14 @@ def main():
     .home-intro h1 {margin:0;padding:0;}
     .home-intro p {margin:12px 0 0;color:#234e73;}
     .block-container {padding-bottom:2rem!important;}
-    .st-key-feature_grid [data-testid="stHorizontalBlock"] {display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px!important;}
+    .st-key-feature_grid [data-testid="stHorizontalBlock"] {display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px!important;}
     .st-key-feature_grid [data-testid="stColumn"] {width:100%!important;min-width:0!important;}
     .st-key-feature_grid .stButton button {min-height:112px;padding:10px 4px;background:#fff!important;border:1px solid #8fb4d1!important;}
     .st-key-feature_grid [data-testid="stColumn"]:nth-child(2) button {background:#edf8ff!important;}
     .st-key-feature_grid .stButton button p {font-size:clamp(14px,4vw,19px)!important;line-height:1.45;color:#173b5d!important;}
     .st-key-feature_grid .stButton button:disabled {opacity:.8!important;}
+    .st-key-feature_grid .stButton button p {overflow-wrap:anywhere;}
+    .st-key-home_settings {max-width:10rem;margin-top:12px;margin-left:auto;}
     </style>''', unsafe_allow_html=True)
     if 'data' not in st.session_state:
         st.session_state.data = empty_data()
